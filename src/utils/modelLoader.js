@@ -1,8 +1,21 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 
+// Синглтон загрузчика для переиспользования
+let loaderInstance = null;
+
+function getLoader() {
+  if (!loaderInstance) {
+    loaderInstance = new GLTFLoader();
+  }
+  return loaderInstance;
+}
+
+/**
+ * Загрузка 3D модели
+ */
 export function loadModel(modelPath, uvCanvas, onSuccess, onError) {
-  const loader = new GLTFLoader();
+  const loader = getLoader();
 
   loader.load(
     modelPath,
@@ -12,12 +25,25 @@ export function loadModel(modelPath, uvCanvas, onSuccess, onError) {
       // Создание текстуры из UV canvas
       const texture = new THREE.CanvasTexture(uvCanvas);
       texture.flipY = false;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.anisotropy = 4;
 
       let firstMesh = null;
 
       // Применение материала ко всем мешам
       loadedModel.traverse((child) => {
         if (child.isMesh) {
+          // Очистка старого материала
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach(m => m.dispose());
+            } else {
+              child.material.dispose();
+            }
+          }
+          
           child.material = new THREE.MeshStandardMaterial({
             map: texture,
             side: THREE.DoubleSide,
@@ -25,6 +51,9 @@ export function loadModel(modelPath, uvCanvas, onSuccess, onError) {
             roughness: 0.7,
             color: 0xffffff,
           });
+          
+          child.castShadow = true;
+          child.receiveShadow = true;
           
           if (!firstMesh) firstMesh = child;
         }
@@ -43,11 +72,18 @@ export function loadModel(modelPath, uvCanvas, onSuccess, onError) {
 
       onSuccess(loadedModel, texture, firstMesh);
     },
+    // Прогресс загрузки (можно использовать для индикатора)
     undefined,
-    onError
+    (error) => {
+      console.error('Ошибка загрузки модели:', error);
+      onError(error);
+    }
   );
 }
 
+/**
+ * Позиционирование камеры для просмотра модели
+ */
 export function positionCamera(camera, controls) {
   const fov = camera.fov * (Math.PI / 180);
   const cameraZ = Math.abs(2 / Math.tan(fov / 2)) * 1.5;

@@ -1,129 +1,180 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { CANVAS_SIZE, TOOLS, MAX_HISTORY } from '../utils/constants';
-import { drawLine, isPixelInUVMask } from '../utils/drawingUtils';
+import { CANVAS_SIZE, TOOLS, MAX_HISTORY, PERFORMANCE } from '../utils/constants';
+import { 
+  drawLine, 
+  drawPoint, 
+  getDistance, 
+  initUVMaskCache,
+  applyUVMask 
+} from '../utils/drawingUtils';
 
-export function useDrawing(uvLayoutImage, initUVCanvas) {
+export function useDrawing(uvLayoutImage, onCanvasUpdate) {
   const drawingLayerRef = useRef(null);
+  const drawingCtxRef = useRef(null);
+  const lastDrawPointRef = useRef(null);
+  
+  // Состояние нажатия - это ключевое для предотвращения рисования без клика
   const [isDrawing, setIsDrawing] = useState(false);
-  const [lastDrawPoint, setLastDrawPoint] = useState(null);
+  const isDrawingRef = useRef(false);
+  
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  
+  const initializedRef = useRef(false);
 
-  // Сохранить начальное пустое состояние при загрузке
-  useEffect(() => {
-    if (uvLayoutImage && history.length === 0) {
-      const canvas = document.createElement('canvas');
-      canvas.width = CANVAS_SIZE;
-      canvas.height = CANVAS_SIZE;
-      setHistory([canvas.toDataURL()]);
-      setHistoryIndex(0);
-    }
-  }, [uvLayoutImage, history.length]);
-
-  const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, forceNew = false) => {
+  // Инициализация drawing layer
+  const ensureDrawingLayer = useCallback(() => {
     if (!drawingLayerRef.current) {
       drawingLayerRef.current = document.createElement('canvas');
       drawingLayerRef.current.width = CANVAS_SIZE;
       drawingLayerRef.current.height = CANVAS_SIZE;
     }
+    if (!drawingCtxRef.current) {
+      drawingCtxRef.current = drawingLayerRef.current.getContext('2d', {
+        willReadFrequently: false
+      });
+    }
+    return drawingCtxRef.current;
+  }, []);
+
+  // Инициализация UV маски и начального состояния истории
+  useEffect(() => {
+    if (uvLayoutImage && !initializedRef.current) {
+      initializedRef.current = true;
+      initUVMaskCache(uvLayoutImage);
+      
+      const emptyCanvas = document.createElement('canvas');
+      emptyCanvas.width = CANVAS_SIZE;
+      emptyCanvas.height = CANVAS_SIZE;
+      
+      setHistory([emptyCanvas.toDataURL('image/png', 0.8)]);
+      setHistoryIndex(0);
+    }
+  }, [uvLayoutImage]);
+
+  // Рисование на canvas - ТОЛЬКО если isDrawing === true
+  const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, forceNew = false) => {
+    // Проверяем флаг нажатия
+    if (!isDrawingRef.current) return;
     
-    const drawingCtx = drawingLayerRef.current.getContext('2d');
+    const ctx = ensureDrawingLayer();
+    const lastPoint = lastDrawPointRef.current;
     
     if (tool === TOOLS.DRAW || tool === TOOLS.ERASE) {
-      if (lastDrawPoint && !forceNew) {
-        drawLine(lastDrawPoint.x, lastDrawPoint.y, x, y, tool, brushColor, brushSize, uvLayoutImage, drawingCtx);
+      if (lastPoint && !forceNew) {
+        const dist = getDistance(lastPoint.x, lastPoint.y, x, y);
+        if (dist < PERFORMANCE.MIN_DRAW_DISTANCE) return;
+        
+        drawLine(lastPoint.x, lastPoint.y, x, y, tool, brushColor, brushSize, ctx);
       } else {
-        if (tool === TOOLS.DRAW) {
-          if (isPixelInUVMask(uvLayoutImage, Math.round(x), Math.round(y))) {
-            drawingCtx.fillStyle = brushColor;
-            drawingCtx.beginPath();
-            drawingCtx.arc(x, y, brushSize, 0, Math.PI * 2);
-            drawingCtx.fill();
-          }
-        } else {
-          drawingCtx.clearRect(x - brushSize, y - brushSize, brushSize * 2, brushSize * 2);
-        }
+        drawPoint(x, y, tool, brushColor, brushSize, ctx);
       }
       
-      setLastDrawPoint({ x, y });
+      lastDrawPointRef.current = { x, y };
     }
     
-    initUVCanvas();
-  }, [lastDrawPoint, uvLayoutImage, initUVCanvas]);
+    if (tool === TOOLS.DRAW && uvLayoutImage) {
+      applyUVMask(drawingLayerRef.current, uvLayoutImage);
+    }
+    
+    onCanvasUpdate();
+  }, [uvLayoutImage, onCanvasUpdate, ensureDrawingLayer]);
 
+  // Сохранение в историю
   const saveToHistory = useCallback(() => {
     if (!drawingLayerRef.current) return;
     
-    const canvas = document.createElement('canvas');
-    canvas.width = CANVAS_SIZE;
-    canvas.height = CANVAS_SIZE;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(drawingLayerRef.current, 0, 0);
+    const dataUrl = drawingLayerRef.current.toDataURL('image/png', 0.8);
     
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(canvas.toDataURL());
+    setHistory(prev => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      newHistory.push(dataUrl);
+      
+      if (newHistory.length > MAX_HISTORY) {
+        return newHistory.slice(-MAX_HISTORY);
+      }
+      return newHistory;
+    });
     
-    if (newHistory.length > MAX_HISTORY) {
-      newHistory.shift();
-    } else {
-      setHistoryIndex(prev => prev + 1);
-    }
-    
-    setHistory(newHistory);
-  }, [history, historyIndex]);
+    setHistoryIndex(prev => Math.min(prev + 1, MAX_HISTORY - 1));
+  }, [historyIndex]);
 
+  // Восстановление из истории
   const restoreFromHistory = useCallback((index) => {
+    if (index < 0 || index >= history.length) return;
+    
     const img = new Image();
     img.onload = () => {
-      if (!drawingLayerRef.current) {
-        drawingLayerRef.current = document.createElement('canvas');
-        drawingLayerRef.current.width = CANVAS_SIZE;
-        drawingLayerRef.current.height = CANVAS_SIZE;
-      }
-      const ctx = drawingLayerRef.current.getContext('2d');
+      const ctx = ensureDrawingLayer();
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
       ctx.drawImage(img, 0, 0);
-      initUVCanvas();
+      onCanvasUpdate();
     };
     img.src = history[index];
-  }, [history, initUVCanvas]);
+  }, [history, onCanvasUpdate, ensureDrawingLayer]);
+
+  // Начало рисования - устанавливаем флаг
+  const startDrawing = useCallback(() => {
+    setIsDrawing(true);
+    isDrawingRef.current = true;
+    lastDrawPointRef.current = null;
+  }, []);
+
+  // Окончание рисования - сбрасываем флаг и сохраняем
+  const stopDrawing = useCallback(() => {
+    if (isDrawingRef.current) {
+      saveToHistory();
+    }
+    setIsDrawing(false);
+    isDrawingRef.current = false;
+    lastDrawPointRef.current = null;
+  }, [saveToHistory]);
 
   const undo = useCallback(() => {
-    if (historyIndex <= 0 || history.length <= 1) return;
+    if (historyIndex <= 0) return;
+    
     const newIndex = historyIndex - 1;
     setHistoryIndex(newIndex);
     restoreFromHistory(newIndex);
-  }, [historyIndex, history.length, restoreFromHistory]);
+  }, [historyIndex, restoreFromHistory]);
 
   const redo = useCallback(() => {
     if (historyIndex >= history.length - 1) return;
+    
     const newIndex = historyIndex + 1;
     setHistoryIndex(newIndex);
     restoreFromHistory(newIndex);
   }, [historyIndex, history.length, restoreFromHistory]);
 
   const clearCanvas = useCallback(() => {
-    drawingLayerRef.current = null;
+    if (drawingLayerRef.current) {
+      const ctx = drawingCtxRef.current || drawingLayerRef.current.getContext('2d');
+      ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    }
+    
     const emptyCanvas = document.createElement('canvas');
     emptyCanvas.width = CANVAS_SIZE;
     emptyCanvas.height = CANVAS_SIZE;
-    setHistory([emptyCanvas.toDataURL()]);
+    
+    setHistory([emptyCanvas.toDataURL('image/png', 0.8)]);
     setHistoryIndex(0);
-    initUVCanvas();
-  }, [initUVCanvas]);
+    
+    onCanvasUpdate();
+  }, [onCanvasUpdate]);
 
   return {
     drawingLayerRef,
     isDrawing,
-    setIsDrawing,
-    lastDrawPoint,
-    setLastDrawPoint,
-    history,
-    historyIndex,
+    startDrawing,
+    stopDrawing,
     drawOnCanvas,
     saveToHistory,
     undo,
     redo,
-    clearCanvas
+    clearCanvas,
+    history,
+    historyIndex,
+    canUndo: historyIndex > 0,
+    canRedo: historyIndex < history.length - 1
   };
 }

@@ -15,3 +15,10 @@ export const TOOLS = {
   ERASE: 'erase',
   IMAGE: 'image'
 };
+
+// Настройки производительности
+export const PERFORMANCE = {
+  DRAW_THROTTLE_MS: 16, // ~60fps
+  TEXTURE_UPDATE_DEBOUNCE_MS: 50,
+  MIN_DRAW_DISTANCE: 2 // минимальное расстояние между точками
+};
