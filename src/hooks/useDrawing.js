@@ -89,11 +89,11 @@ export function useDrawing(uvLayoutImage, initUVCanvas) {
   }, [history, initUVCanvas]);
 
   const undo = useCallback(() => {
-    if (historyIndex <= 0) return;
+    if (historyIndex <= 0 || history.length <= 1) return;
     const newIndex = historyIndex - 1;
     setHistoryIndex(newIndex);
     restoreFromHistory(newIndex);
-  }, [historyIndex, restoreFromHistory]);
+  }, [historyIndex, history.length, restoreFromHistory]);
 
   const redo = useCallback(() => {
     if (historyIndex >= history.length - 1) return;

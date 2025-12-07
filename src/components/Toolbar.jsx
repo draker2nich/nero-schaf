@@ -134,7 +134,7 @@ export default function Toolbar({
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={onUndo}
-                disabled={historyIndex < 0}
+                disabled={historyIndex <= 0 || historyLength <= 1}
                 className="py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1"
                 title="Отменить последнее действие"
               >
