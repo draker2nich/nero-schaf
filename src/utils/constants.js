@@ -13,6 +13,5 @@ export const MAX_HISTORY = 30;
 export const TOOLS = {
   DRAW: 'draw',
   ERASE: 'erase',
-  TEXT: 'text',
   IMAGE: 'image'
 };

@@ -18,7 +18,6 @@ import { loadModel, positionCamera } from '../utils/modelLoader';
 import { getCanvasCoords } from '../utils/drawingUtils';
 import { useDrawing } from '../hooks/useDrawing';
 import Toolbar from './Toolbar';
-import Onboarding from './Onboarding';
 
 export default function GarmentDesigner() {
   const containerRef = useRef(null);
@@ -36,8 +35,6 @@ export default function GarmentDesigner() {
   const [tool, setTool] = useState(TOOLS.DRAW);
   const [brushSize, setBrushSize] = useState(15);
   const [brushColor, setBrushColor] = useState('#000000');
-  const [fontSize, setFontSize] = useState(48);
-  const [textInput, setTextInput] = useState('');
   
   const [model, setModel] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -56,7 +53,6 @@ export default function GarmentDesigner() {
   
   const [isMobile, setIsMobile] = useState(false);
   const [showTools, setShowTools] = useState(true);
-  const [showOnboarding, setShowOnboarding] = useState(true);
 
   const initUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
@@ -223,16 +219,10 @@ export default function GarmentDesigner() {
       return;
     }
 
-    if (tool === TOOLS.TEXT) {
-      drawOnCanvas(x, y, tool, brushColor, brushSize, fontSize, textInput, true);
-      saveToHistory();
-      return;
-    }
-
     setIsDrawing(true);
     setLastDrawPoint(null);
-    drawOnCanvas(x, y, tool, brushColor, brushSize, fontSize, textInput, true);
-  }, [isTransformMode, designImage, tool, imageTransform, brushColor, brushSize, fontSize, textInput, drawOnCanvas, saveToHistory, setIsDrawing, setLastDrawPoint]);
+    drawOnCanvas(x, y, tool, brushColor, brushSize, true);
+  }, [isTransformMode, designImage, tool, imageTransform, brushColor, brushSize, drawOnCanvas, setIsDrawing, setLastDrawPoint]);
 
   const handleMove = useCallback((e) => {
     e.preventDefault();
@@ -264,10 +254,10 @@ export default function GarmentDesigner() {
       return;
     }
 
-    if (isDrawing && tool !== TOOLS.TEXT) {
-      drawOnCanvas(x, y, tool, brushColor, brushSize, fontSize, textInput);
+    if (isDrawing) {
+      drawOnCanvas(x, y, tool, brushColor, brushSize);
     }
-  }, [isTransformMode, isDraggingImage, isDrawing, tool, lastTouchDistance, dragStart, brushColor, brushSize, fontSize, textInput, drawOnCanvas]);
+  }, [isTransformMode, isDraggingImage, isDrawing, tool, lastTouchDistance, dragStart, brushColor, brushSize, drawOnCanvas]);
 
   const handleEnd = useCallback(() => {
     if (isDrawing) {
@@ -369,7 +359,6 @@ export default function GarmentDesigner() {
 
   return (
     <div className="w-full h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col lg:flex-row overflow-hidden">
-      <Onboarding show={showOnboarding} onClose={() => setShowOnboarding(false)} />
 
       {isMobile && (
         <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm">
@@ -439,7 +428,6 @@ export default function GarmentDesigner() {
           </div>
         )}
 
-        {/* Canvas moved ABOVE Toolbar */}
         <div className="p-4 border-b border-gray-200">
           <canvas
             ref={uvCanvasRef}
@@ -458,7 +446,6 @@ export default function GarmentDesigner() {
           />
         </div>
 
-        {/* Toolbar is now below the canvas */}
         <div className="flex-1 overflow-auto">
           <Toolbar
             tool={tool}
@@ -467,10 +454,6 @@ export default function GarmentDesigner() {
             setBrushSize={setBrushSize}
             brushColor={brushColor}
             setBrushColor={setBrushColor}
-            fontSize={fontSize}
-            setFontSize={setFontSize}
-            textInput={textInput}
-            setTextInput={setTextInput}
             onImageUpload={handleDesignImageUpload}
             onClear={clearCanvas}
             onUndo={undo}

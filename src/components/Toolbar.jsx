@@ -8,10 +8,6 @@ export default function Toolbar({
   setBrushSize,
   brushColor,
   setBrushColor,
-  fontSize,
-  setFontSize,
-  textInput,
-  setTextInput,
   onImageUpload,
   onClear,
   onUndo,
@@ -31,12 +27,11 @@ export default function Toolbar({
         <div className="space-y-5">
           <h3 className="text-sm font-semibold text-gray-900">Инструменты</h3>
           
-          {/* Tool buttons - moved down */}
-          <div className="grid grid-cols-2 gap-2 mb-6">
+          {/* Tool buttons */}
+          <div className="grid grid-cols-3 gap-2 mb-6">
             {[
               { id: TOOLS.DRAW, icon: 'fa-pencil-alt', label: 'Рисование' },
               { id: TOOLS.ERASE, icon: 'fa-eraser', label: 'Ластик' },
-              { id: TOOLS.TEXT, icon: 'fa-font', label: 'Текст' },
               { id: TOOLS.IMAGE, icon: 'fa-image', label: 'Изображение' }
             ].map(({ id, icon, label }) => (
               <button
@@ -121,56 +116,6 @@ export default function Toolbar({
                 max="100"
               />
             </div>
-          )}
-
-          {/* Text tool properties */}
-          {tool === TOOLS.TEXT && (
-            <>
-              <div>
-                <label className="text-xs font-medium text-gray-700 mb-2 block">Текст</label>
-                <input
-                  type="text"
-                  value={textInput}
-                  onChange={(e) => setTextInput(e.target.value)}
-                  placeholder="Введите текст..."
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              
-              <div>
-                <div className="flex justify-between items-center mb-2">
-                  <label className="text-xs font-medium text-gray-700">Размер шрифта</label>
-                  <span className="text-xs text-gray-500">{fontSize}px</span>
-                </div>
-                <input
-                  type="range"
-                  value={fontSize}
-                  onChange={(e) => setFontSize(Number(e.target.value))}
-                  className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  min="24"
-                  max="200"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-gray-700 mb-3 block">Цвет</label>
-                <div className="grid grid-cols-10 gap-2">
-                  {COLOR_PRESETS.map((color) => (
-                    <button
-                      key={color}
-                      onClick={() => setBrushColor(color)}
-                      className={`w-full aspect-square rounded-lg border-2 transition-all ${
-                        brushColor === color 
-                          ? 'border-blue-500 ring-2 ring-blue-200 scale-110' 
-                          : 'border-gray-300 hover:border-gray-400'
-                      }`}
-                      style={{ backgroundColor: color }}
-                      title={color}
-                    />
-                  ))}
-                </div>
-              </div>
-            </>
           )}
 
           <div className="border-t border-gray-200 my-4"></div>

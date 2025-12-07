@@ -12,7 +12,6 @@ export function useDrawing(uvLayoutImage, initUVCanvas) {
   // Сохранить начальное пустое состояние при загрузке
   useEffect(() => {
     if (uvLayoutImage && history.length === 0) {
-      // Создаем пустой canvas для начального состояния
       const canvas = document.createElement('canvas');
       canvas.width = CANVAS_SIZE;
       canvas.height = CANVAS_SIZE;
@@ -21,7 +20,7 @@ export function useDrawing(uvLayoutImage, initUVCanvas) {
     }
   }, [uvLayoutImage, history.length]);
 
-  const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, fontSize, textInput, forceNew = false) => {
+  const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, forceNew = false) => {
     if (!drawingLayerRef.current) {
       drawingLayerRef.current = document.createElement('canvas');
       drawingLayerRef.current.width = CANVAS_SIZE;
@@ -47,13 +46,6 @@ export function useDrawing(uvLayoutImage, initUVCanvas) {
       }
       
       setLastDrawPoint({ x, y });
-      
-    } else if (tool === TOOLS.TEXT && textInput) {
-      if (!isPixelInUVMask(uvLayoutImage, Math.round(x), Math.round(y))) return;
-      
-      drawingCtx.fillStyle = brushColor;
-      drawingCtx.font = `${fontSize}px Arial`;
-      drawingCtx.fillText(textInput, x, y);
     }
     
     initUVCanvas();
