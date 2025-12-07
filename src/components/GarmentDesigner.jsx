@@ -31,12 +31,12 @@ export default function GarmentDesigner() {
   const meshRef = useRef(null);
   const modelGroupRef = useRef(null);
   const animationFrameRef = useRef(null);
+  const modelLoadedRef = useRef(false);
   
   const [tool, setTool] = useState(TOOLS.DRAW);
   const [brushSize, setBrushSize] = useState(15);
   const [brushColor, setBrushColor] = useState('#000000');
   
-  const [model, setModel] = useState(null);
   const [loading, setLoading] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   
@@ -172,9 +172,11 @@ export default function GarmentDesigner() {
   }, [loadUVLayout]);
 
   useEffect(() => {
-    if (!sceneRef.current || model || !uvCanvasRef.current) return;
+    if (!sceneRef.current || modelLoadedRef.current || !uvCanvasRef.current) return;
     
+    modelLoadedRef.current = true;
     setLoading(true);
+    
     loadModel(
       MODEL_PATH,
       uvCanvasRef.current,
@@ -186,15 +188,15 @@ export default function GarmentDesigner() {
         sceneRef.current.add(loadedModel);
         positionCamera(cameraRef.current, controlsRef.current);
         
-        setModel(loadedModel);
         setLoading(false);
       },
       (error) => {
         console.error('Ошибка загрузки модели:', error);
+        modelLoadedRef.current = false;
         setLoading(false);
       }
     );
-  }, [model]);
+  }, []);
 
   useEffect(() => {
     if (uvCanvasRef.current) {
@@ -278,15 +280,15 @@ export default function GarmentDesigner() {
   }, []);
 
   const toggleWireframe = useCallback(() => {
-    if (!model) return;
+    if (!modelGroupRef.current) return;
     const newWireframe = !wireframe;
     setWireframe(newWireframe);
-    model.traverse((child) => {
+    modelGroupRef.current.traverse((child) => {
       if (child.isMesh && child.material) {
         child.material.wireframe = newWireframe;
       }
     });
-  }, [model, wireframe]);
+  }, [wireframe]);
 
   const handleDesignImageUpload = useCallback((event) => {
     const file = event.target.files?.[0];
@@ -380,7 +382,7 @@ export default function GarmentDesigner() {
             <div className="flex items-center gap-2">
               <button
                 onClick={toggleWireframe}
-                disabled={!model}
+                disabled={loading}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
                   wireframe 
                     ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/30' 
