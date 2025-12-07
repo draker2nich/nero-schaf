@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { CANVAS_SIZE, TOOLS, MAX_HISTORY } from '../utils/constants';
 import { drawLine, isPixelInUVMask } from '../utils/drawingUtils';
 
@@ -8,6 +8,18 @@ export function useDrawing(uvLayoutImage, initUVCanvas) {
   const [lastDrawPoint, setLastDrawPoint] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+
+  // Сохранить начальное пустое состояние при загрузке
+  useEffect(() => {
+    if (uvLayoutImage && history.length === 0) {
+      // Создаем пустой canvas для начального состояния
+      const canvas = document.createElement('canvas');
+      canvas.width = CANVAS_SIZE;
+      canvas.height = CANVAS_SIZE;
+      setHistory([canvas.toDataURL()]);
+      setHistoryIndex(0);
+    }
+  }, [uvLayoutImage, history.length]);
 
   const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, fontSize, textInput, forceNew = false) => {
     if (!drawingLayerRef.current) {
@@ -100,8 +112,11 @@ export function useDrawing(uvLayoutImage, initUVCanvas) {
 
   const clearCanvas = useCallback(() => {
     drawingLayerRef.current = null;
-    setHistory([]);
-    setHistoryIndex(-1);
+    const emptyCanvas = document.createElement('canvas');
+    emptyCanvas.width = CANVAS_SIZE;
+    emptyCanvas.height = CANVAS_SIZE;
+    setHistory([emptyCanvas.toDataURL()]);
+    setHistoryIndex(0);
     initUVCanvas();
   }, [initUVCanvas]);
 

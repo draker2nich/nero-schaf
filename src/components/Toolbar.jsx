@@ -27,41 +27,89 @@ export default function Toolbar({
 }) {
   return (
     <div className="p-4">
-      <h2 className="text-base font-semibold text-gray-900 mb-4">Панель Инструментов Дизайна</h2>
-      
-      {/* Кнопки инструментов */}
-      <div className="grid grid-cols-3 gap-2 mb-6">
-        {[
-          { id: TOOLS.DRAW, icon: 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z', label: 'Рисование' },
-          { id: TOOLS.ERASE, icon: 'M6 18L18 6M6 6l12 12', label: 'Ластик' },
-          { id: TOOLS.TEXT, icon: 'M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129', label: 'Текст' }
-        ].map(({ id, icon, label }) => (
-          <button
-            key={id}
-            onClick={() => setTool(id)}
-            className={`py-4 px-2 rounded-xl text-xs font-medium transition-all flex flex-col items-center justify-center gap-2 ${
-              tool === id
-                ? 'bg-blue-500 text-white shadow-lg'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-            title={label}
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={icon} />
-            </svg>
-            <span className="text-xs">{label}</span>
-          </button>
-        ))}
-      </div>
-
       {!isTransformMode ? (
         <div className="space-y-5">
+          <h3 className="text-sm font-semibold text-gray-900">Инструменты</h3>
+          
+          {/* Tool buttons - moved down */}
+          <div className="grid grid-cols-2 gap-2 mb-6">
+            {[
+              { id: TOOLS.DRAW, icon: 'fa-pencil-alt', label: 'Рисование' },
+              { id: TOOLS.ERASE, icon: 'fa-eraser', label: 'Ластик' },
+              { id: TOOLS.TEXT, icon: 'fa-font', label: 'Текст' },
+              { id: TOOLS.IMAGE, icon: 'fa-image', label: 'Изображение' }
+            ].map(({ id, icon, label }) => (
+              <button
+                key={id}
+                onClick={() => id === TOOLS.IMAGE ? document.querySelector('input[type="file"]').click() : setTool(id)}
+                className={`py-4 px-2 rounded-xl text-xs font-medium transition-all flex flex-col items-center justify-center gap-2 ${
+                  tool === id
+                    ? 'bg-blue-500 text-white shadow-lg'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+                title={label}
+              >
+                <i className={`fas ${icon} text-xl`}></i>
+                <span className="text-xs">{label}</span>
+              </button>
+            ))}
+          </div>
+
+          <input
+            type="file"
+            accept="image/*"
+            onChange={onImageUpload}
+            className="hidden"
+          />
+
+          <div className="border-t border-gray-200 my-4"></div>
+
           <h3 className="text-sm font-semibold text-gray-900">Свойства</h3>
           
-          {(tool === TOOLS.DRAW || tool === TOOLS.ERASE) && (
+          {/* Draw tool properties */}
+          {tool === TOOLS.DRAW && (
+            <>
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-medium text-gray-700">Размер кисти</label>
+                  <span className="text-xs text-gray-500">{brushSize}px</span>
+                </div>
+                <input
+                  type="range"
+                  value={brushSize}
+                  onChange={(e) => setBrushSize(Number(e.target.value))}
+                  className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  min="5"
+                  max="100"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-700 mb-3 block">Цвет</label>
+                <div className="grid grid-cols-10 gap-2">
+                  {COLOR_PRESETS.map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setBrushColor(color)}
+                      className={`w-full aspect-square rounded-lg border-2 transition-all ${
+                        brushColor === color 
+                          ? 'border-blue-500 ring-2 ring-blue-200 scale-110' 
+                          : 'border-gray-300 hover:border-gray-400'
+                      }`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Eraser tool properties */}
+          {tool === TOOLS.ERASE && (
             <div>
               <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-medium text-gray-700">Размер кисти</label>
+                <label className="text-xs font-medium text-gray-700">Размер ластика</label>
                 <span className="text-xs text-gray-500">{brushSize}px</span>
               </div>
               <input
@@ -75,25 +123,7 @@ export default function Toolbar({
             </div>
           )}
 
-          <div>
-            <label className="text-xs font-medium text-gray-700 mb-3 block">Цвет</label>
-            <div className="grid grid-cols-10 gap-2">
-              {COLOR_PRESETS.map((color) => (
-                <button
-                  key={color}
-                  onClick={() => setBrushColor(color)}
-                  className={`w-full aspect-square rounded-lg border-2 transition-all ${
-                    brushColor === color 
-                      ? 'border-blue-500 ring-2 ring-blue-200 scale-110' 
-                      : 'border-gray-300 hover:border-gray-400'
-                  }`}
-                  style={{ backgroundColor: color }}
-                  title={color}
-                />
-              ))}
-            </div>
-          </div>
-
+          {/* Text tool properties */}
           {tool === TOOLS.TEXT && (
             <>
               <div>
@@ -121,6 +151,25 @@ export default function Toolbar({
                   max="200"
                 />
               </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-700 mb-3 block">Цвет</label>
+                <div className="grid grid-cols-10 gap-2">
+                  {COLOR_PRESETS.map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setBrushColor(color)}
+                      className={`w-full aspect-square rounded-lg border-2 transition-all ${
+                        brushColor === color 
+                          ? 'border-blue-500 ring-2 ring-blue-200 scale-110' 
+                          : 'border-gray-300 hover:border-gray-400'
+                      }`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                </div>
+              </div>
             </>
           )}
 
@@ -128,28 +177,10 @@ export default function Toolbar({
 
           <div className="space-y-2">
             <button
-              onClick={() => document.querySelector('input[type="file"]').click()}
-              className="w-full py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-all flex items-center justify-center gap-2"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              Добавить изображение
-              <input
-                type="file"
-                accept="image/*"
-                onChange={onImageUpload}
-                className="hidden"
-              />
-            </button>
-            
-            <button
               onClick={onClear}
               className="w-full py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-all flex items-center justify-center gap-2"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
+              <i className="fas fa-trash text-sm"></i>
               Очистить холст
             </button>
 
@@ -158,13 +189,11 @@ export default function Toolbar({
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={onUndo}
-                disabled={historyIndex <= 0}
+                disabled={historyIndex < 0}
                 className="py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1"
                 title="Отменить последнее действие"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                </svg>
+                <i className="fas fa-undo text-lg"></i>
                 <span className="text-xs">Отменить</span>
               </button>
               <button
@@ -173,9 +202,7 @@ export default function Toolbar({
                 className="py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1"
                 title="Повторить последнее действие"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10h-10a8 8 0 00-8 8v2m18-10l-6 6m6-6l-6-6" />
-                </svg>
+                <i className="fas fa-redo text-lg"></i>
                 <span className="text-xs">Повторить</span>
               </button>
             </div>

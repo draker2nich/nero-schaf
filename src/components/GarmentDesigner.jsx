@@ -439,38 +439,8 @@ export default function GarmentDesigner() {
           </div>
         )}
 
-        <Toolbar
-          tool={tool}
-          setTool={setTool}
-          brushSize={brushSize}
-          setBrushSize={setBrushSize}
-          brushColor={brushColor}
-          setBrushColor={setBrushColor}
-          fontSize={fontSize}
-          setFontSize={setFontSize}
-          textInput={textInput}
-          setTextInput={setTextInput}
-          onImageUpload={handleDesignImageUpload}
-          onClear={clearCanvas}
-          onUndo={undo}
-          onRedo={redo}
-          historyIndex={historyIndex}
-          historyLength={history.length}
-          isTransformMode={isTransformMode}
-          imageTransform={imageTransform}
-          setImageTransform={setImageTransform}
-          onApplyImage={applyImageToCanvas}
-          onCancelImage={cancelImageTransform}
-          isMobile={isMobile}
-        />
-
-        <div className="flex-1 overflow-auto p-4 border-t border-gray-200">
-          <div className="mb-3 text-center">
-            <p className="text-xs font-semibold text-gray-500 tracking-wide uppercase">
-              {isTransformMode ? '🔧 Режим трансформации' : '🎨 Холст для рисования'}
-            </p>
-          </div>
-
+        {/* Canvas moved ABOVE Toolbar */}
+        <div className="p-4 border-b border-gray-200">
           <canvas
             ref={uvCanvasRef}
             width={CANVAS_SIZE}
@@ -485,6 +455,34 @@ export default function GarmentDesigner() {
             onTouchStart={handleStart}
             onTouchMove={handleMove}
             onTouchEnd={handleEnd}
+          />
+        </div>
+
+        {/* Toolbar is now below the canvas */}
+        <div className="flex-1 overflow-auto">
+          <Toolbar
+            tool={tool}
+            setTool={setTool}
+            brushSize={brushSize}
+            setBrushSize={setBrushSize}
+            brushColor={brushColor}
+            setBrushColor={setBrushColor}
+            fontSize={fontSize}
+            setFontSize={setFontSize}
+            textInput={textInput}
+            setTextInput={setTextInput}
+            onImageUpload={handleDesignImageUpload}
+            onClear={clearCanvas}
+            onUndo={undo}
+            onRedo={redo}
+            historyIndex={historyIndex}
+            historyLength={history.length}
+            isTransformMode={isTransformMode}
+            imageTransform={imageTransform}
+            setImageTransform={setImageTransform}
+            onApplyImage={applyImageToCanvas}
+            onCancelImage={cancelImageTransform}
+            isMobile={isMobile}
           />
         </div>
       </div>
