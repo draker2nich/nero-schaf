@@ -4,7 +4,8 @@ import {
   CANVAS_SIZE, 
   MODEL_PATH, 
   UV_LAYOUT_PATH, 
-  TOOLS
+  TOOLS,
+  PERFORMANCE
 } from '../utils/constants';
 import { 
   createGradientBackground,
@@ -28,8 +29,18 @@ function useIsMobile() {
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 1024);
     check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
+    
+    let timeoutId;
+    const debouncedCheck = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(check, 150);
+    };
+    
+    window.addEventListener('resize', debouncedCheck);
+    return () => {
+      window.removeEventListener('resize', debouncedCheck);
+      clearTimeout(timeoutId);
+    };
   }, []);
   
   return isMobile;
@@ -52,6 +63,7 @@ function useUVLayout() {
 export default function GarmentDesigner() {
   const containerRef = useRef(null);
   const uvCanvasRef = useRef(null);
+  const uvCtxRef = useRef(null);
   
   // Three.js refs
   const sceneRef = useRef(null);
@@ -71,63 +83,94 @@ export default function GarmentDesigner() {
   const [wireframe, setWireframe] = useState(false);
   const [showTools, setShowTools] = useState(true);
   
+  // Refs для throttling
+  const lastPointerTimeRef = useRef(0);
+  const textureUpdateScheduledRef = useRef(false);
+  const canvasUpdateScheduledRef = useRef(false);
+  
   const isMobile = useIsMobile();
   const uvLayoutImage = useUVLayout();
 
-  // Ref для хранения текущих значений designImage и imageTransform
+  // Refs для изображения (чтобы избежать лишних ререндеров)
   const designImageRef = useRef(null);
   const imageTransformRef = useRef({ x: 0, y: 0, scale: 1, rotation: 0 });
 
-  // Функция обновления UV canvas - без debounce, в реальном времени
-  const updateUVCanvas = useCallback(() => {
+  // Обновление 3D текстуры с throttle
+  const scheduleTextureUpdate = useCallback(() => {
+    if (textureUpdateScheduledRef.current || !textureRef.current) return;
+    
+    textureUpdateScheduledRef.current = true;
+    setTimeout(() => {
+      if (textureRef.current) {
+        textureRef.current.needsUpdate = true;
+      }
+      textureUpdateScheduledRef.current = false;
+    }, PERFORMANCE.TEXTURE_UPDATE_MS);
+  }, []);
+
+  // Отрисовка UV canvas
+  const renderUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
     
-    const canvas = uvCanvasRef.current;
-    const ctx = canvas.getContext('2d');
+    if (!uvCtxRef.current) {
+      uvCtxRef.current = uvCanvasRef.current.getContext('2d', {
+        alpha: false,
+        desynchronized: true
+      });
+    }
     
-    // Очищаем и заливаем белым
+    const ctx = uvCtxRef.current;
+    
+    // Белый фон
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
-    // Рисуем слой рисования
+    // Слой рисования
     if (drawingLayerRef.current) {
       ctx.drawImage(drawingLayerRef.current, 0, 0);
     }
     
-    // Рисуем изображение в режиме трансформации (предпросмотр в реальном времени)
-    const currentDesignImage = designImageRef.current;
-    const currentTransform = imageTransformRef.current;
+    // Изображение в режиме трансформации
+    const img = designImageRef.current;
+    const transform = imageTransformRef.current;
     
-    if (currentDesignImage) {
-      ctx.save();
-      const imgW = CANVAS_SIZE * currentTransform.scale;
-      const imgH = CANVAS_SIZE * currentTransform.scale;
-      const centerX = CANVAS_SIZE / 2 + currentTransform.x;
-      const centerY = CANVAS_SIZE / 2 + currentTransform.y;
+    if (img) {
+      const imgW = CANVAS_SIZE * transform.scale;
+      const imgH = CANVAS_SIZE * transform.scale;
+      const centerX = CANVAS_SIZE / 2 + transform.x;
+      const centerY = CANVAS_SIZE / 2 + transform.y;
       
+      ctx.save();
       ctx.translate(centerX, centerY);
-      ctx.rotate(currentTransform.rotation * Math.PI / 180);
-      ctx.drawImage(currentDesignImage, -imgW / 2, -imgH / 2, imgW, imgH);
+      ctx.rotate(transform.rotation * Math.PI / 180);
+      ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
       ctx.restore();
     }
     
-    // Рисуем UV разметку поверх
+    // UV разметка
     if (uvLayoutImage) {
       ctx.globalAlpha = 0.2;
       ctx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
       ctx.globalAlpha = 1.0;
     }
     
-    // Обновляем текстуру Three.js сразу, без задержки
-    if (textureRef.current) {
-      textureRef.current.needsUpdate = true;
-    }
-  }, [uvLayoutImage]);
+    scheduleTextureUpdate();
+  }, [uvLayoutImage, scheduleTextureUpdate]);
+
+  // Обновление canvas с RAF throttling
+  const updateUVCanvas = useCallback(() => {
+    if (canvasUpdateScheduledRef.current) return;
+    
+    canvasUpdateScheduledRef.current = true;
+    requestAnimationFrame(() => {
+      canvasUpdateScheduledRef.current = false;
+      renderUVCanvas();
+    });
+  }, [renderUVCanvas]);
 
   // Хук рисования
   const {
     drawingLayerRef,
-    isDrawing,
     startDrawing,
     stopDrawing,
     drawOnCanvas,
@@ -139,7 +182,7 @@ export default function GarmentDesigner() {
     canRedo
   } = useDrawing(uvLayoutImage, updateUVCanvas);
 
-  // Хук трансформации изображения
+  // Хук трансформации
   const {
     designImage,
     imageTransform,
@@ -153,23 +196,18 @@ export default function GarmentDesigner() {
     cancelTransform
   } = useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory, updateUVCanvas);
 
-  // Синхронизируем refs с состоянием для использования в updateUVCanvas
+  // Синхронизация refs
   useEffect(() => {
     designImageRef.current = designImage;
-  }, [designImage]);
-
-  useEffect(() => {
-    imageTransformRef.current = imageTransform;
-    // Обновляем canvas при каждом изменении трансформации
-    updateUVCanvas();
-  }, [imageTransform, updateUVCanvas]);
-
-  // Обновляем canvas при изменении изображения
-  useEffect(() => {
     updateUVCanvas();
   }, [designImage, updateUVCanvas]);
 
-  // Инициализация Three.js сцены
+  useEffect(() => {
+    imageTransformRef.current = imageTransform;
+    updateUVCanvas();
+  }, [imageTransform, updateUVCanvas]);
+
+  // Three.js сцена
   useEffect(() => {
     if (!containerRef.current || rendererRef.current) return;
 
@@ -192,12 +230,19 @@ export default function GarmentDesigner() {
     setupLights(scene);
     setupGround(scene);
 
-    const animate = () => {
+    // Оптимизированный рендер цикл
+    let lastRenderTime = 0;
+    const animate = (time) => {
       animationFrameRef.current = requestAnimationFrame(animate);
+      
+      // Ограничение до 30fps для экономии ресурсов
+      if (time - lastRenderTime < 33) return;
+      lastRenderTime = time;
+      
       controls.update();
       renderer.render(scene, camera);
     };
-    animate();
+    animate(0);
 
     const handleResize = () => {
       if (!container) return;
@@ -247,7 +292,7 @@ export default function GarmentDesigner() {
     );
   }, []);
 
-  // Обработчики событий рисования
+  // Обработчики pointer событий с throttling
   const handlePointerDown = useCallback((e) => {
     e.preventDefault();
     
@@ -265,6 +310,13 @@ export default function GarmentDesigner() {
   const handlePointerMove = useCallback((e) => {
     e.preventDefault();
     
+    // Throttle pointer events
+    const now = Date.now();
+    if (now - lastPointerTimeRef.current < PERFORMANCE.POINTER_THROTTLE_MS) {
+      return;
+    }
+    lastPointerTimeRef.current = now;
+    
     const coords = getCanvasCoords(e, uvCanvasRef.current);
     
     if (isTransformMode) {
@@ -280,7 +332,6 @@ export default function GarmentDesigner() {
     stopDrag();
   }, [stopDrawing, stopDrag]);
 
-  // Экспорт текстуры
   const downloadTexture = useCallback(() => {
     if (!uvCanvasRef.current) return;
     
@@ -290,7 +341,6 @@ export default function GarmentDesigner() {
     link.click();
   }, []);
 
-  // Переключение каркасного режима
   const toggleWireframe = useCallback(() => {
     if (!modelGroupRef.current) return;
     
@@ -304,7 +354,6 @@ export default function GarmentDesigner() {
     });
   }, [wireframe]);
 
-  // Мемоизация пропсов для Toolbar
   const toolbarProps = useMemo(() => ({
     tool,
     setTool,
@@ -351,7 +400,6 @@ export default function GarmentDesigner() {
 
       {/* 3D вьюпорт */}
       <main className="flex-1 flex flex-col bg-white lg:rounded-2xl lg:m-4 lg:shadow-xl overflow-hidden">
-        {/* Панель управления */}
         <div className="bg-white border-b border-gray-200 px-4 py-3 flex-shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
@@ -391,7 +439,6 @@ export default function GarmentDesigner() {
           </div>
         </div>
         
-        {/* 3D контейнер */}
         <div ref={containerRef} className="flex-1 relative touch-none" />
       </main>
 
@@ -411,7 +458,6 @@ export default function GarmentDesigner() {
           </div>
         )}
 
-        {/* Canvas для рисования */}
         <div className="p-4 border-b border-gray-200 flex-shrink-0">
           <canvas
             ref={uvCanvasRef}
@@ -430,7 +476,6 @@ export default function GarmentDesigner() {
           />
         </div>
 
-        {/* Панель инструментов */}
         <div className="flex-1 overflow-auto">
           <Toolbar {...toolbarProps} />
         </div>

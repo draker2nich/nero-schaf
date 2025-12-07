@@ -1,5 +1,5 @@
 // Константы приложения
-export const CANVAS_SIZE = 2048;
+export const CANVAS_SIZE = 1024; // Уменьшено с 2048 для производительности
 export const MODEL_PATH = '/materials/model.glb';
 export const UV_LAYOUT_PATH = '/materials/uv-layout.png';
 
@@ -8,7 +8,7 @@ export const COLOR_PRESETS = [
   '#FFFF00', '#FF00FF', '#00FFFF', '#FF6B35', '#004E89'
 ];
 
-export const MAX_HISTORY = 30;
+export const MAX_HISTORY = 20; // Уменьшено для экономии памяти
 
 export const TOOLS = {
   DRAW: 'draw',
@@ -18,7 +18,8 @@ export const TOOLS = {
 
 // Настройки производительности
 export const PERFORMANCE = {
-  DRAW_THROTTLE_MS: 16, // ~60fps
-  TEXTURE_UPDATE_DEBOUNCE_MS: 50,
-  MIN_DRAW_DISTANCE: 2 // минимальное расстояние между точками
+  POINTER_THROTTLE_MS: 16, // ~60fps для событий pointer
+  TEXTURE_UPDATE_MS: 50, // Обновление 3D текстуры
+  MIN_DRAW_DISTANCE: 3, // Минимальное расстояние между точками
+  TRANSFORM_THROTTLE_MS: 32 // ~30fps для трансформации изображения
 };
