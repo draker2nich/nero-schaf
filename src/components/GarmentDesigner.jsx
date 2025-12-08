@@ -228,7 +228,13 @@ export default function GarmentDesigner() {
   // Синхронизация refs
   useEffect(() => {
     designImageRef.current = designImage;
-    updateUVCanvas();
+    // Принудительное обновление при изменении изображения
+    if (designImage) {
+    // Обновляем canvas и текстуру сразу после установки ref
+      updateUVCanvas(true);
+    } else {
+      updateUVCanvas();
+    }
   }, [designImage, updateUVCanvas]);
 
   useEffect(() => {

@@ -28,13 +28,19 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
         setDesignImage(img);
         setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
         setIsTransformMode(true);
+        
+        // ИСПРАВЛЕНИЕ: Принудительное обновление canvas и 3D текстуры
+        // Используем setTimeout чтобы state успел обновиться
+        setTimeout(() => {
+          onCanvasUpdate(true);
+        }, 0);
       };
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
     
     event.target.value = '';
-  }, []);
+  }, [onCanvasUpdate]);
 
   // Начало перетаскивания
   const startDrag = useCallback((x, y, touches) => {
@@ -140,7 +146,7 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     onCanvasUpdate(true);
   }, [onCanvasUpdate]);
 
-  // НОВЫЙ МЕТОД: Сброс состояния изображения (для очистки холста)
+  // Сброс состояния изображения (для очистки холста)
   const resetImageState = useCallback(() => {
     setDesignImage(null);
     setIsTransformMode(false);
@@ -158,6 +164,6 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     stopDrag,
     applyImage,
     cancelTransform,
-    resetImageState // Экспортируем новый метод
+    resetImageState
   };
 }
