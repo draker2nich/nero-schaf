@@ -164,12 +164,13 @@ export default function GarmentDesigner() {
 
   // ИСПРАВЛЕНО: Обновление canvas с поддержкой принудительного режима
   const updateUVCanvas = useCallback((force = false) => {
-    // Принудительное обновление - пропускаем throttling
     if (force) {
-      // Сбрасываем флаг scheduled чтобы следующие вызовы работали
       canvasUpdateScheduledRef.current = false;
       renderUVCanvas();
-      forceTextureUpdate();
+      // Синхронное обновление текстуры
+      if (textureRef.current) {
+        textureRef.current.needsUpdate = true;
+      }
       return;
     }
     
@@ -182,7 +183,7 @@ export default function GarmentDesigner() {
       renderUVCanvas();
       scheduleTextureUpdate();
     });
-  }, [renderUVCanvas, scheduleTextureUpdate, forceTextureUpdate]);
+  }, [renderUVCanvas]);
 
   // Хук рисования
   const {

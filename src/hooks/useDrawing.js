@@ -16,12 +16,23 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
   const [isDrawing, setIsDrawing] = useState(false);
   const isDrawingRef = useRef(false);
   
-  const [history, setHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  // Refs для истории
+  const historyRef = useRef([]);
+  const historyIndexRef = useRef(-1);
+  
+  // Состояния для UI
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   
   const initializedRef = useRef(false);
+  const isRestoringRef = useRef(false);
 
-  // Инициализация drawing layer
+  const updateHistoryState = useCallback(() => {
+    setHistoryState({
+      canUndo: historyIndexRef.current > 0,
+      canRedo: historyIndexRef.current < historyRef.current.length - 1
+    });
+  }, []);
+
   const ensureDrawingLayer = useCallback(() => {
     if (!drawingLayerRef.current) {
       drawingLayerRef.current = document.createElement('canvas');
@@ -36,7 +47,6 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
     return drawingCtxRef.current;
   }, []);
 
-  // Инициализация UV маски и начального состояния истории
   useEffect(() => {
     if (uvLayoutImage && !initializedRef.current) {
       initializedRef.current = true;
@@ -46,12 +56,13 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
       emptyCanvas.width = CANVAS_SIZE;
       emptyCanvas.height = CANVAS_SIZE;
       
-      setHistory([emptyCanvas.toDataURL('image/png', 0.8)]);
-      setHistoryIndex(0);
+      const initialState = emptyCanvas.toDataURL('image/png', 0.8);
+      historyRef.current = [initialState];
+      historyIndexRef.current = 0;
+      updateHistoryState();
     }
-  }, [uvLayoutImage]);
+  }, [uvLayoutImage, updateHistoryState]);
 
-  // Рисование на canvas - ТОЛЬКО если isDrawing === true
   const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, forceNew = false) => {
     if (!isDrawingRef.current) return;
     
@@ -78,48 +89,72 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
     onCanvasUpdate();
   }, [uvLayoutImage, onCanvasUpdate, ensureDrawingLayer]);
 
-  // Сохранение в историю
   const saveToHistory = useCallback(() => {
     if (!drawingLayerRef.current) return;
     
     const dataUrl = drawingLayerRef.current.toDataURL('image/png', 0.8);
     
-    setHistory(prev => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      newHistory.push(dataUrl);
-      
-      if (newHistory.length > MAX_HISTORY) {
-        return newHistory.slice(-MAX_HISTORY);
-      }
-      return newHistory;
-    });
+    const currentIndex = historyIndexRef.current;
+    const newHistory = historyRef.current.slice(0, currentIndex + 1);
+    newHistory.push(dataUrl);
     
-    setHistoryIndex(prev => Math.min(prev + 1, MAX_HISTORY - 1));
-  }, [historyIndex]);
+    if (newHistory.length > MAX_HISTORY) {
+      const overflow = newHistory.length - MAX_HISTORY;
+      historyRef.current = newHistory.slice(overflow);
+      historyIndexRef.current = historyRef.current.length - 1;
+    } else {
+      historyRef.current = newHistory;
+      historyIndexRef.current = newHistory.length - 1;
+    }
+    
+    updateHistoryState();
+  }, [updateHistoryState]);
 
-  // Восстановление из истории
+  // ИСПРАВЛЕНО: Восстановление с гарантированной синхронизацией 3D модели
   const restoreFromHistory = useCallback((index) => {
-    if (index < 0 || index >= history.length) return;
+    if (index < 0 || index >= historyRef.current.length) return;
+    if (isRestoringRef.current) return;
+    
+    isRestoringRef.current = true;
     
     const img = new Image();
+    
     img.onload = () => {
       const ctx = ensureDrawingLayer();
+      
+      // 1. Очищаем canvas
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      
+      // 2. Рисуем восстановленное состояние
       ctx.drawImage(img, 0, 0);
-      // Принудительное обновление после восстановления
+      
+      // 3. Принудительно обновляем UV canvas и 3D текстуру
+      // force = true гарантирует немедленное обновление без throttling
       onCanvasUpdate(true);
+      
+      // 4. Дополнительный вызов через RAF для гарантии
+      // что Three.js получит обновлённую текстуру
+      requestAnimationFrame(() => {
+        onCanvasUpdate(true);
+        isRestoringRef.current = false;
+      });
     };
-    img.src = history[index];
-  }, [history, onCanvasUpdate, ensureDrawingLayer]);
+    
+    img.onerror = () => {
+      console.error('Ошибка загрузки состояния истории');
+      isRestoringRef.current = false;
+    };
+    
+    img.src = historyRef.current[index];
+  }, [onCanvasUpdate, ensureDrawingLayer]);
 
-  // Начало рисования
   const startDrawing = useCallback(() => {
+    if (isRestoringRef.current) return;
     setIsDrawing(true);
     isDrawingRef.current = true;
     lastDrawPointRef.current = null;
   }, []);
 
-  // Окончание рисования
   const stopDrawing = useCallback(() => {
     if (isDrawingRef.current) {
       saveToHistory();
@@ -130,45 +165,50 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
   }, [saveToHistory]);
 
   const undo = useCallback(() => {
-    if (historyIndex <= 0) return;
+    if (historyIndexRef.current <= 0) return;
+    if (isRestoringRef.current) return;
     
-    const newIndex = historyIndex - 1;
-    setHistoryIndex(newIndex);
+    const newIndex = historyIndexRef.current - 1;
+    historyIndexRef.current = newIndex;
+    updateHistoryState();
     restoreFromHistory(newIndex);
-  }, [historyIndex, restoreFromHistory]);
+  }, [restoreFromHistory, updateHistoryState]);
 
   const redo = useCallback(() => {
-    if (historyIndex >= history.length - 1) return;
+    if (historyIndexRef.current >= historyRef.current.length - 1) return;
+    if (isRestoringRef.current) return;
     
-    const newIndex = historyIndex + 1;
-    setHistoryIndex(newIndex);
+    const newIndex = historyIndexRef.current + 1;
+    historyIndexRef.current = newIndex;
+    updateHistoryState();
     restoreFromHistory(newIndex);
-  }, [historyIndex, history.length, restoreFromHistory]);
+  }, [restoreFromHistory, updateHistoryState]);
 
-  // ИСПРАВЛЕНО: Очистка с принудительным обновлением и возвратом callback для сброса изображения
   const clearCanvas = useCallback((onCleared) => {
-    // Очищаем drawing layer
+    if (isRestoringRef.current) return;
+    
     if (drawingLayerRef.current) {
       const ctx = drawingCtxRef.current || drawingLayerRef.current.getContext('2d');
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     }
     
-    // Сбрасываем историю
     const emptyCanvas = document.createElement('canvas');
     emptyCanvas.width = CANVAS_SIZE;
     emptyCanvas.height = CANVAS_SIZE;
     
-    setHistory([emptyCanvas.toDataURL('image/png', 0.8)]);
-    setHistoryIndex(0);
+    const emptyState = emptyCanvas.toDataURL('image/png', 0.8);
+    historyRef.current = [emptyState];
+    historyIndexRef.current = 0;
+    updateHistoryState();
     
-    // Вызываем callback для сброса внешнего состояния (например, designImage)
     if (typeof onCleared === 'function') {
       onCleared();
     }
     
-    // Принудительное обновление canvas без throttling
+    // Принудительное обновление с гарантией синхронизации
     onCanvasUpdate(true);
-  }, [onCanvasUpdate]);
+    requestAnimationFrame(() => onCanvasUpdate(true));
+  }, [onCanvasUpdate, updateHistoryState]);
 
   return {
     drawingLayerRef,
@@ -180,9 +220,7 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
     undo,
     redo,
     clearCanvas,
-    history,
-    historyIndex,
-    canUndo: historyIndex > 0,
-    canRedo: historyIndex < history.length - 1
+    canUndo: historyState.canUndo,
+    canRedo: historyState.canRedo
   };
 }
