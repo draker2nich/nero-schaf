@@ -95,6 +95,13 @@ export default function GarmentDesigner() {
   const designImageRef = useRef(null);
   const imageTransformRef = useRef({ x: 0, y: 0, scale: 1, rotation: 0 });
 
+  // ИСПРАВЛЕНО: Принудительное обновление 3D текстуры
+  const forceTextureUpdate = useCallback(() => {
+    if (textureRef.current) {
+      textureRef.current.needsUpdate = true;
+    }
+  }, []);
+
   // Обновление 3D текстуры с throttle
   const scheduleTextureUpdate = useCallback(() => {
     if (textureUpdateScheduledRef.current || !textureRef.current) return;
@@ -153,20 +160,29 @@ export default function GarmentDesigner() {
       ctx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
       ctx.globalAlpha = 1.0;
     }
-    
-    scheduleTextureUpdate();
-  }, [uvLayoutImage, scheduleTextureUpdate]);
+  }, [uvLayoutImage]);
 
-  // Обновление canvas с RAF throttling
-  const updateUVCanvas = useCallback(() => {
+  // ИСПРАВЛЕНО: Обновление canvas с поддержкой принудительного режима
+  const updateUVCanvas = useCallback((force = false) => {
+    // Принудительное обновление - пропускаем throttling
+    if (force) {
+      // Сбрасываем флаг scheduled чтобы следующие вызовы работали
+      canvasUpdateScheduledRef.current = false;
+      renderUVCanvas();
+      forceTextureUpdate();
+      return;
+    }
+    
+    // Обычное обновление с throttling
     if (canvasUpdateScheduledRef.current) return;
     
     canvasUpdateScheduledRef.current = true;
     requestAnimationFrame(() => {
       canvasUpdateScheduledRef.current = false;
       renderUVCanvas();
+      scheduleTextureUpdate();
     });
-  }, [renderUVCanvas]);
+  }, [renderUVCanvas, scheduleTextureUpdate, forceTextureUpdate]);
 
   // Хук рисования
   const {
@@ -193,8 +209,20 @@ export default function GarmentDesigner() {
     drag,
     stopDrag,
     applyImage,
-    cancelTransform
+    cancelTransform,
+    resetImageState // Новый метод
   } = useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory, updateUVCanvas);
+
+  // ИСПРАВЛЕНО: Обёртка для clearCanvas с сбросом изображения
+  const handleClearCanvas = useCallback(() => {
+    clearCanvas(() => {
+      // Сбрасываем состояние изображения при очистке
+      resetImageState();
+      // Очищаем refs
+      designImageRef.current = null;
+      imageTransformRef.current = { x: 0, y: 0, scale: 1, rotation: 0 };
+    });
+  }, [clearCanvas, resetImageState]);
 
   // Синхронизация refs
   useEffect(() => {
@@ -362,7 +390,7 @@ export default function GarmentDesigner() {
     brushColor,
     setBrushColor,
     onImageUpload: handleImageUpload,
-    onClear: clearCanvas,
+    onClear: handleClearCanvas, // Используем новую обёртку
     onUndo: undo,
     onRedo: redo,
     canUndo,
@@ -374,7 +402,7 @@ export default function GarmentDesigner() {
     onCancelImage: cancelTransform,
     isMobile
   }), [
-    tool, brushSize, brushColor, handleImageUpload, clearCanvas,
+    tool, brushSize, brushColor, handleImageUpload, handleClearCanvas,
     undo, redo, canUndo, canRedo, isTransformMode, imageTransform,
     setImageTransform, applyImage, cancelTransform, isMobile
   ]);

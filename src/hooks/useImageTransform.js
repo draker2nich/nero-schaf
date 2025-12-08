@@ -94,32 +94,27 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
   const applyImage = useCallback(() => {
     if (!designImage) return;
     
-    // Создаём временный canvas для изображения
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = CANVAS_SIZE;
     tempCanvas.height = CANVAS_SIZE;
     const tempCtx = tempCanvas.getContext('2d');
     
-    // Вычисляем размеры и позицию
     const imgW = CANVAS_SIZE * imageTransform.scale;
     const imgH = CANVAS_SIZE * imageTransform.scale;
     const centerX = CANVAS_SIZE / 2 + imageTransform.x;
     const centerY = CANVAS_SIZE / 2 + imageTransform.y;
     
-    // Рисуем трансформированное изображение
     tempCtx.save();
     tempCtx.translate(centerX, centerY);
     tempCtx.rotate(imageTransform.rotation * Math.PI / 180);
     tempCtx.drawImage(designImage, -imgW / 2, -imgH / 2, imgW, imgH);
     tempCtx.restore();
     
-    // Применяем UV маску
     if (uvLayoutImage) {
       tempCtx.globalCompositeOperation = 'destination-in';
       tempCtx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
     }
     
-    // Добавляем к drawing layer
     if (!drawingLayerRef.current) {
       drawingLayerRef.current = document.createElement('canvas');
       drawingLayerRef.current.width = CANVAS_SIZE;
@@ -129,19 +124,28 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     const drawingCtx = drawingLayerRef.current.getContext('2d');
     drawingCtx.drawImage(tempCanvas, 0, 0);
     
-    // Сбрасываем состояние
     setDesignImage(null);
     setIsTransformMode(false);
     saveToHistory();
-    onCanvasUpdate();
+    // Принудительное обновление
+    onCanvasUpdate(true);
   }, [designImage, imageTransform, uvLayoutImage, drawingLayerRef, saveToHistory, onCanvasUpdate]);
 
   // Отмена трансформации
   const cancelTransform = useCallback(() => {
     setDesignImage(null);
     setIsTransformMode(false);
-    onCanvasUpdate();
+    setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+    // Принудительное обновление
+    onCanvasUpdate(true);
   }, [onCanvasUpdate]);
+
+  // НОВЫЙ МЕТОД: Сброс состояния изображения (для очистки холста)
+  const resetImageState = useCallback(() => {
+    setDesignImage(null);
+    setIsTransformMode(false);
+    setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+  }, []);
 
   return {
     designImage,
@@ -153,6 +157,7 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     drag,
     stopDrag,
     applyImage,
-    cancelTransform
+    cancelTransform,
+    resetImageState // Экспортируем новый метод
   };
 }

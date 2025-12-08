@@ -13,7 +13,6 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
   const drawingCtxRef = useRef(null);
   const lastDrawPointRef = useRef(null);
   
-  // Состояние нажатия - это ключевое для предотвращения рисования без клика
   const [isDrawing, setIsDrawing] = useState(false);
   const isDrawingRef = useRef(false);
   
@@ -54,7 +53,6 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
 
   // Рисование на canvas - ТОЛЬКО если isDrawing === true
   const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, forceNew = false) => {
-    // Проверяем флаг нажатия
     if (!isDrawingRef.current) return;
     
     const ctx = ensureDrawingLayer();
@@ -108,19 +106,20 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
       const ctx = ensureDrawingLayer();
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
       ctx.drawImage(img, 0, 0);
-      onCanvasUpdate();
+      // Принудительное обновление после восстановления
+      onCanvasUpdate(true);
     };
     img.src = history[index];
   }, [history, onCanvasUpdate, ensureDrawingLayer]);
 
-  // Начало рисования - устанавливаем флаг
+  // Начало рисования
   const startDrawing = useCallback(() => {
     setIsDrawing(true);
     isDrawingRef.current = true;
     lastDrawPointRef.current = null;
   }, []);
 
-  // Окончание рисования - сбрасываем флаг и сохраняем
+  // Окончание рисования
   const stopDrawing = useCallback(() => {
     if (isDrawingRef.current) {
       saveToHistory();
@@ -146,12 +145,15 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
     restoreFromHistory(newIndex);
   }, [historyIndex, history.length, restoreFromHistory]);
 
-  const clearCanvas = useCallback(() => {
+  // ИСПРАВЛЕНО: Очистка с принудительным обновлением и возвратом callback для сброса изображения
+  const clearCanvas = useCallback((onCleared) => {
+    // Очищаем drawing layer
     if (drawingLayerRef.current) {
       const ctx = drawingCtxRef.current || drawingLayerRef.current.getContext('2d');
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     }
     
+    // Сбрасываем историю
     const emptyCanvas = document.createElement('canvas');
     emptyCanvas.width = CANVAS_SIZE;
     emptyCanvas.height = CANVAS_SIZE;
@@ -159,7 +161,13 @@ export function useDrawing(uvLayoutImage, onCanvasUpdate) {
     setHistory([emptyCanvas.toDataURL('image/png', 0.8)]);
     setHistoryIndex(0);
     
-    onCanvasUpdate();
+    // Вызываем callback для сброса внешнего состояния (например, designImage)
+    if (typeof onCleared === 'function') {
+      onCleared();
+    }
+    
+    // Принудительное обновление canvas без throttling
+    onCanvasUpdate(true);
   }, [onCanvasUpdate]);
 
   return {
