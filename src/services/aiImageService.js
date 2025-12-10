@@ -1,16 +1,20 @@
 /**
  * AI Image Generation Service
  * Использует Google Gemini API для генерации изображений
+ * 
+ * API ключ загружается из переменной окружения REACT_APP_GEMINI_API_KEY
+ * Для production: добавьте ключ в .env файл
  */
 
-const GEMINI_MODELS = {
-  FLASH: 'gemini-2.5-flash-image',
-  PRO: 'gemini-2.5-pro-image'
-};
+const GEMINI_MODEL = 'gemini-2.5-flash-image';
 
-const DEFAULT_CONFIG = {
-  model: GEMINI_MODELS.FLASH,
-  aspectRatio: '1:1'
+// Получение API ключа из env
+const getApiKey = () => {
+  const key = process.env.REACT_APP_GEMINI_API_KEY;
+  if (!key) {
+    console.error('REACT_APP_GEMINI_API_KEY не установлен в переменных окружения');
+  }
+  return key;
 };
 
 // Доступные соотношения сторон
@@ -23,31 +27,96 @@ export const ASPECT_RATIOS = [
 ];
 
 /**
+ * Конвертация файла в base64
+ */
+export async function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      const base64 = result.split(',')[1];
+      resolve({
+        data: base64,
+        mimeType: file.type
+      });
+    };
+    reader.onerror = () => reject(new Error('Ошибка чтения файла'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Конвертация Image объекта в base64
+ */
+export async function imageToBase64(img) {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  
+  const dataUrl = canvas.toDataURL('image/png');
+  return {
+    data: dataUrl.split(',')[1],
+    mimeType: 'image/png'
+  };
+}
+
+/**
+ * Проверка доступности API
+ */
+export async function checkApiAvailability() {
+  const apiKey = getApiKey();
+  
+  if (!apiKey) {
+    return { available: false, error: 'API ключ не настроен' };
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+    const response = await fetch(url);
+    
+    if (response.ok) {
+      return { available: true };
+    }
+    
+    if (response.status === 429) {
+      return { available: false, error: 'Превышен лимит запросов' };
+    }
+    
+    return { available: false, error: 'Ключ недействителен' };
+  } catch (err) {
+    return { available: false, error: 'Ошибка подключения к серверу' };
+  }
+}
+
+/**
  * Генерация изображений через Gemini API
  */
 export async function generateImages(prompt, options = {}) {
-  const { 
-    apiKey, 
-    count = 4, 
-    aspectRatio = '1:1',
-    model = GEMINI_MODELS.FLASH 
-  } = options;
-
+  const apiKey = getApiKey();
+  
   if (!apiKey) {
-    throw new Error('API ключ не указан');
+    throw new Error('API ключ не настроен. Обратитесь к администратору.');
   }
 
   if (!prompt?.trim()) {
-    throw new Error('Промпт не может быть пустым');
+    throw new Error('Описание не может быть пустым');
   }
 
-  const imageCount = Math.min(Math.max(count, 2), 6);
+  const { 
+    count = 4, 
+    aspectRatio = '1:1',
+    referenceImage = null
+  } = options;
+
+  const imageCount = Math.min(Math.max(count, 2), 4);
   const results = [];
   const errors = [];
 
   // Генерируем изображения параллельно
   const promises = Array.from({ length: imageCount }, (_, i) => 
-    generateSingleImage(prompt, apiKey, model, aspectRatio, i)
+    generateSingleImage(prompt, apiKey, aspectRatio, referenceImage, i)
       .then(result => results.push(result))
       .catch(err => errors.push({ index: i, error: err.message }))
   );
@@ -61,31 +130,44 @@ export async function generateImages(prompt, options = {}) {
   return {
     images: results.sort((a, b) => a.index - b.index),
     errors: errors.length > 0 ? errors : null,
-    prompt,
-    model
+    prompt
   };
 }
 
 /**
  * Генерация одного изображения
  */
-async function generateSingleImage(prompt, apiKey, model, aspectRatio, index) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+async function generateSingleImage(prompt, apiKey, aspectRatio, referenceImage, index) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+  // Формируем содержимое запроса
+  const parts = [];
+  
+  // Если есть референс изображение - добавляем его первым
+  if (referenceImage) {
+    parts.push({
+      inlineData: {
+        mimeType: referenceImage.mimeType,
+        data: referenceImage.data
+      }
+    });
+  }
+  
+  // Добавляем текстовый промпт
+  parts.push({ text: prompt });
 
   const requestBody = {
     contents: [{
-      parts: [{ text: prompt }]
+      parts
     }],
     generationConfig: {
       responseModalities: ['TEXT', 'IMAGE'],
-      // Добавляем небольшую вариативность для разных результатов
       temperature: 1.0,
       topP: 0.95,
       topK: 40
     }
   };
 
-  // Добавляем конфиг изображения если поддерживается
   if (aspectRatio && aspectRatio !== '1:1') {
     requestBody.generationConfig.imageConfig = {
       aspectRatio: aspectRatio
@@ -102,15 +184,20 @@ async function generateSingleImage(prompt, apiKey, model, aspectRatio, index) {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `API error: ${response.status}`);
+    const errorMsg = errorData.error?.message || `Ошибка API: ${response.status}`;
+    
+    if (response.status === 429) {
+      throw new Error('Слишком много запросов. Подождите немного.');
+    }
+    
+    throw new Error(errorMsg);
   }
 
   const data = await response.json();
   
-  // Извлекаем изображение из ответа
   const candidate = data.candidates?.[0];
   if (!candidate?.content?.parts) {
-    throw new Error('Неверный формат ответа API');
+    throw new Error('Неверный формат ответа');
   }
 
   for (const part of candidate.content.parts) {
@@ -133,10 +220,8 @@ async function generateSingleImage(prompt, apiKey, model, aspectRatio, index) {
 export async function loadImageFromDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Не удалось загрузить изображение'));
-    
     img.src = dataUrl;
   });
 }
@@ -204,30 +289,6 @@ export function applyStyleToPrompt(prompt, styleId) {
   return prompt + style.suffix;
 }
 
-/**
- * Проверка валидности API ключа
- */
-export async function validateApiKey(apiKey) {
-  if (!apiKey || apiKey.length < 30) {
-    return { valid: false, error: 'Неверный формат ключа' };
-  }
-
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-    const response = await fetch(url);
-    
-    if (response.ok) {
-      return { valid: true };
-    }
-    
-    const data = await response.json().catch(() => ({}));
-    return { 
-      valid: false, 
-      error: data.error?.message || 'Ключ недействителен' 
-    };
-  } catch (err) {
-    return { valid: false, error: 'Ошибка проверки ключа' };
-  }
-}
-
-export { GEMINI_MODELS };
+export const GEMINI_MODELS = {
+  FLASH: GEMINI_MODEL
+};
