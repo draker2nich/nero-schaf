@@ -16,7 +16,7 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
   const dragStartRef = useRef({ x: 0, y: 0 });
   const lastTouchDistanceRef = useRef(0);
 
-  // Загрузка изображения
+  // Загрузка изображения из файла
   const handleImageUpload = useCallback((event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -29,8 +29,6 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
         setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
         setIsTransformMode(true);
         
-        // ИСПРАВЛЕНИЕ: Принудительное обновление canvas и 3D текстуры
-        // Используем setTimeout чтобы state успел обновиться
         setTimeout(() => {
           onCanvasUpdate(true);
         }, 0);
@@ -40,6 +38,19 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     reader.readAsDataURL(file);
     
     event.target.value = '';
+  }, [onCanvasUpdate]);
+
+  // Прямая установка изображения (для AI генерации)
+  const setDesignImageDirect = useCallback((img) => {
+    if (!img) return;
+    
+    setDesignImage(img);
+    setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+    setIsTransformMode(true);
+    
+    setTimeout(() => {
+      onCanvasUpdate(true);
+    }, 0);
   }, [onCanvasUpdate]);
 
   // Начало перетаскивания
@@ -133,7 +144,6 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     setDesignImage(null);
     setIsTransformMode(false);
     saveToHistory();
-    // Принудительное обновление
     onCanvasUpdate(true);
   }, [designImage, imageTransform, uvLayoutImage, drawingLayerRef, saveToHistory, onCanvasUpdate]);
 
@@ -142,11 +152,10 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     setDesignImage(null);
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
-    // Принудительное обновление
     onCanvasUpdate(true);
   }, [onCanvasUpdate]);
 
-  // Сброс состояния изображения (для очистки холста)
+  // Сброс состояния изображения
   const resetImageState = useCallback(() => {
     setDesignImage(null);
     setIsTransformMode(false);
@@ -159,6 +168,7 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     setImageTransform,
     isTransformMode,
     handleImageUpload,
+    setDesignImageDirect,
     startDrag,
     drag,
     stopDrag,

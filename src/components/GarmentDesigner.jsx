@@ -21,6 +21,7 @@ import { getCanvasCoords } from '../utils/drawingUtils';
 import { useDrawing } from '../hooks/useDrawing';
 import { useImageTransform } from '../hooks/useImageTransform';
 import Toolbar from './Toolbar';
+import AIGenerationModal from './AIGenerationModal';
 
 // Хук для определения мобильного устройства
 function useIsMobile() {
@@ -82,6 +83,7 @@ export default function GarmentDesigner() {
   const [loading, setLoading] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [showTools, setShowTools] = useState(true);
+  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   
   // Refs для throttling
   const lastPointerTimeRef = useRef(0);
@@ -91,11 +93,11 @@ export default function GarmentDesigner() {
   const isMobile = useIsMobile();
   const uvLayoutImage = useUVLayout();
 
-  // Refs для изображения (чтобы избежать лишних ререндеров)
+  // Refs для изображения
   const designImageRef = useRef(null);
   const imageTransformRef = useRef({ x: 0, y: 0, scale: 1, rotation: 0 });
 
-  // ИСПРАВЛЕНО: Принудительное обновление 3D текстуры
+  // Принудительное обновление 3D текстуры
   const forceTextureUpdate = useCallback(() => {
     if (textureRef.current) {
       textureRef.current.needsUpdate = true;
@@ -128,16 +130,13 @@ export default function GarmentDesigner() {
     
     const ctx = uvCtxRef.current;
     
-    // Белый фон
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
-    // Слой рисования
     if (drawingLayerRef.current) {
       ctx.drawImage(drawingLayerRef.current, 0, 0);
     }
     
-    // Изображение в режиме трансформации
     const img = designImageRef.current;
     const transform = imageTransformRef.current;
     
@@ -154,7 +153,6 @@ export default function GarmentDesigner() {
       ctx.restore();
     }
     
-    // UV разметка
     if (uvLayoutImage) {
       ctx.globalAlpha = 0.2;
       ctx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
@@ -162,19 +160,17 @@ export default function GarmentDesigner() {
     }
   }, [uvLayoutImage]);
 
-  // ИСПРАВЛЕНО: Обновление canvas с поддержкой принудительного режима
+  // Обновление canvas с поддержкой принудительного режима
   const updateUVCanvas = useCallback((force = false) => {
     if (force) {
       canvasUpdateScheduledRef.current = false;
       renderUVCanvas();
-      // Синхронное обновление текстуры
       if (textureRef.current) {
         textureRef.current.needsUpdate = true;
       }
       return;
     }
     
-    // Обычное обновление с throttling
     if (canvasUpdateScheduledRef.current) return;
     
     canvasUpdateScheduledRef.current = true;
@@ -183,7 +179,7 @@ export default function GarmentDesigner() {
       renderUVCanvas();
       scheduleTextureUpdate();
     });
-  }, [renderUVCanvas]);
+  }, [renderUVCanvas, scheduleTextureUpdate]);
 
   // Хук рисования
   const {
@@ -206,20 +202,24 @@ export default function GarmentDesigner() {
     setImageTransform,
     isTransformMode,
     handleImageUpload,
+    setDesignImageDirect,
     startDrag,
     drag,
     stopDrag,
     applyImage,
     cancelTransform,
-    resetImageState // Новый метод
+    resetImageState
   } = useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory, updateUVCanvas);
 
-  // ИСПРАВЛЕНО: Обёртка для clearCanvas с сбросом изображения
+  // Обработчик AI-генерации
+  const handleAIImageGenerated = useCallback((img) => {
+    setDesignImageDirect(img);
+  }, [setDesignImageDirect]);
+
+  // Обёртка для clearCanvas с сбросом изображения
   const handleClearCanvas = useCallback(() => {
     clearCanvas(() => {
-      // Сбрасываем состояние изображения при очистке
       resetImageState();
-      // Очищаем refs
       designImageRef.current = null;
       imageTransformRef.current = { x: 0, y: 0, scale: 1, rotation: 0 };
     });
@@ -228,9 +228,7 @@ export default function GarmentDesigner() {
   // Синхронизация refs
   useEffect(() => {
     designImageRef.current = designImage;
-    // Принудительное обновление при изменении изображения
     if (designImage) {
-    // Обновляем canvas и текстуру сразу после установки ref
       updateUVCanvas(true);
     } else {
       updateUVCanvas();
@@ -265,12 +263,10 @@ export default function GarmentDesigner() {
     setupLights(scene);
     setupGround(scene);
 
-    // Оптимизированный рендер цикл
     let lastRenderTime = 0;
     const animate = (time) => {
       animationFrameRef.current = requestAnimationFrame(animate);
       
-      // Ограничение до 30fps для экономии ресурсов
       if (time - lastRenderTime < 33) return;
       lastRenderTime = time;
       
@@ -327,7 +323,7 @@ export default function GarmentDesigner() {
     );
   }, []);
 
-  // Обработчики pointer событий с throttling
+  // Обработчики pointer событий
   const handlePointerDown = useCallback((e) => {
     e.preventDefault();
     
@@ -345,7 +341,6 @@ export default function GarmentDesigner() {
   const handlePointerMove = useCallback((e) => {
     e.preventDefault();
     
-    // Throttle pointer events
     const now = Date.now();
     if (now - lastPointerTimeRef.current < PERFORMANCE.POINTER_THROTTLE_MS) {
       return;
@@ -397,7 +392,8 @@ export default function GarmentDesigner() {
     brushColor,
     setBrushColor,
     onImageUpload: handleImageUpload,
-    onClear: handleClearCanvas, // Используем новую обёртку
+    onAIGenerate: () => setIsAIModalOpen(true),
+    onClear: handleClearCanvas,
     onUndo: undo,
     onRedo: redo,
     canUndo,
@@ -483,7 +479,7 @@ export default function GarmentDesigner() {
           isMobile 
             ? `fixed inset-x-0 bottom-0 bg-white rounded-t-3xl shadow-2xl transform transition-transform duration-300 ease-out ${
                 showTools ? 'translate-y-0' : 'translate-y-full'
-              } z-50 max-h-[70vh] overflow-auto`
+              } z-40 max-h-[70vh] overflow-auto`
             : 'w-96 bg-white lg:rounded-2xl lg:m-4 lg:ml-0 lg:shadow-xl flex flex-col overflow-hidden'
         }`}
       >
@@ -515,6 +511,13 @@ export default function GarmentDesigner() {
           <Toolbar {...toolbarProps} />
         </div>
       </aside>
+
+      {/* AI Generation Modal */}
+      <AIGenerationModal
+        isOpen={isAIModalOpen}
+        onClose={() => setIsAIModalOpen(false)}
+        onImageGenerated={handleAIImageGenerated}
+      />
     </div>
   );
 }

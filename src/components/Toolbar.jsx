@@ -1,7 +1,7 @@
 import React, { memo, useCallback } from 'react';
 import { TOOLS, COLOR_PRESETS } from '../utils/constants';
 
-// Иконки как компоненты для избежания зависимости от Font Awesome
+// Иконки как компоненты
 const PencilIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
@@ -20,6 +20,13 @@ const ImageIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
       d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+  </svg>
+);
+
+const SparklesIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+      d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
   </svg>
 );
 
@@ -43,20 +50,29 @@ const TrashIcon = () => (
 );
 
 // Кнопка инструмента
-const ToolButton = memo(({ id, icon: Icon, label, isActive, onClick }) => (
-  <button
-    onClick={onClick}
-    className={`py-3 px-2 rounded-xl text-xs font-medium transition-all flex flex-col items-center justify-center gap-1.5 ${
-      isActive
-        ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
-        : 'bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300'
-    }`}
-    aria-label={label}
-  >
-    <Icon />
-    <span className="text-xs">{label}</span>
-  </button>
-));
+const ToolButton = memo(({ id, icon: Icon, label, isActive, onClick, variant }) => {
+  const baseClasses = "py-3 px-2 rounded-xl text-xs font-medium transition-all flex flex-col items-center justify-center gap-1.5";
+  
+  const variants = {
+    default: isActive
+      ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300',
+    ai: isActive
+      ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-lg shadow-violet-500/30'
+      : 'bg-gradient-to-r from-violet-50 to-purple-50 text-violet-700 hover:from-violet-100 hover:to-purple-100 border border-violet-200'
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      className={`${baseClasses} ${variants[variant || 'default']}`}
+      aria-label={label}
+    >
+      <Icon />
+      <span className="text-xs">{label}</span>
+    </button>
+  );
+});
 
 // Кнопка цвета
 const ColorButton = memo(({ color, isActive, onClick }) => (
@@ -158,6 +174,7 @@ function Toolbar({
   brushColor,
   setBrushColor,
   onImageUpload,
+  onAIGenerate,
   onClear,
   onUndo,
   onRedo,
@@ -178,8 +195,7 @@ function Toolbar({
 
   const tools = [
     { id: TOOLS.DRAW, icon: PencilIcon, label: 'Рисование' },
-    { id: TOOLS.ERASE, icon: EraserIcon, label: 'Ластик' },
-    { id: TOOLS.IMAGE, icon: ImageIcon, label: 'Изображение' }
+    { id: TOOLS.ERASE, icon: EraserIcon, label: 'Ластик' }
   ];
 
   if (isTransformMode) {
@@ -201,7 +217,8 @@ function Toolbar({
       <div className="space-y-5">
         <h3 className="text-sm font-semibold text-gray-900">Инструменты</h3>
 
-        <div className="grid grid-cols-3 gap-2">
+        {/* Основные инструменты */}
+        <div className="grid grid-cols-2 gap-2">
           {tools.map(({ id, icon, label }) => (
             <ToolButton
               key={id}
@@ -209,9 +226,32 @@ function Toolbar({
               icon={icon}
               label={label}
               isActive={tool === id}
-              onClick={() => id === TOOLS.IMAGE ? handleImageClick() : setTool(id)}
+              onClick={() => setTool(id)}
             />
           ))}
+        </div>
+
+        {/* Секция изображений */}
+        <div className="space-y-2">
+          <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide">Добавить изображение</h4>
+          
+          <div className="grid grid-cols-2 gap-2">
+            <ToolButton
+              id="image"
+              icon={ImageIcon}
+              label="Загрузить"
+              isActive={false}
+              onClick={handleImageClick}
+            />
+            <ToolButton
+              id="ai"
+              icon={SparklesIcon}
+              label="AI Генерация"
+              isActive={false}
+              onClick={onAIGenerate}
+              variant="ai"
+            />
+          </div>
         </div>
 
         <input
