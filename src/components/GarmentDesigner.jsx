@@ -137,6 +137,7 @@ export default function GarmentDesigner() {
       ctx.drawImage(drawingLayerRef.current, 0, 0);
     }
     
+    // ИСПРАВЛЕНО: Используем ref напрямую для актуального значения
     const img = designImageRef.current;
     const transform = imageTransformRef.current;
     
@@ -207,9 +208,19 @@ export default function GarmentDesigner() {
     drag,
     stopDrag,
     applyImage,
-    cancelTransform,
+    cancelTransform: originalCancelTransform,
     resetImageState
   } = useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory, updateUVCanvas);
+
+  // ИСПРАВЛЕНО: Обёртка для cancelTransform с очисткой refs перед обновлением
+  const cancelTransform = useCallback(() => {
+    // Сначала очищаем refs напрямую
+    designImageRef.current = null;
+    imageTransformRef.current = { x: 0, y: 0, scale: 1, rotation: 0 };
+    
+    // Затем вызываем оригинальную функцию
+    originalCancelTransform();
+  }, [originalCancelTransform]);
 
   // Обработчик AI-генерации
   const handleAIImageGenerated = useCallback((img) => {
@@ -402,7 +413,7 @@ export default function GarmentDesigner() {
     imageTransform,
     setImageTransform,
     onApplyImage: applyImage,
-    onCancelImage: cancelTransform,
+    onCancelImage: cancelTransform, // Используем обёрнутую версию
     isMobile
   }), [
     tool, brushSize, brushColor, handleImageUpload, handleClearCanvas,

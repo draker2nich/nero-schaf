@@ -147,12 +147,22 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     onCanvasUpdate(true);
   }, [designImage, imageTransform, uvLayoutImage, drawingLayerRef, saveToHistory, onCanvasUpdate]);
 
-  // Отмена трансформации
+  // ИСПРАВЛЕНО: Отмена трансформации с принудительным обновлением 3D модели
   const cancelTransform = useCallback(() => {
+    // Сначала сбрасываем состояние
     setDesignImage(null);
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
-    onCanvasUpdate(true);
+    
+    // Используем setTimeout чтобы дождаться обновления state
+    // и только потом обновить canvas и 3D текстуру
+    setTimeout(() => {
+      onCanvasUpdate(true);
+      // Дополнительный вызов через RAF для гарантии синхронизации с 3D
+      requestAnimationFrame(() => {
+        onCanvasUpdate(true);
+      });
+    }, 0);
   }, [onCanvasUpdate]);
 
   // Сброс состояния изображения
