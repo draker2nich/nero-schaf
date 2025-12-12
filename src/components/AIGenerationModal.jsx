@@ -3,6 +3,7 @@ import {
   generateImages, 
   loadImageFromDataUrl, 
   fileToBase64,
+  imageToBase64,
   STYLE_PRESETS, 
   ASPECT_RATIOS,
   applyStyleToPrompt,
@@ -40,6 +41,12 @@ const TrashIcon = () => (
 const CheckIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+  </svg>
+);
+
+const RefreshIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
   </svg>
 );
 
@@ -118,19 +125,24 @@ const ReferenceUploader = memo(({ reference, onUpload, onRemove }) => {
 
   if (reference) {
     return (
-      <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+      <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-violet-50 to-purple-50 rounded-xl border-2 border-violet-200">
         <img 
           src={reference.previewUrl} 
           alt="Референс" 
-          className="w-16 h-16 object-cover rounded-lg"
+          className="w-16 h-16 object-cover rounded-lg ring-2 ring-violet-300"
         />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-700">Референс загружен</p>
-          <p className="text-xs text-gray-500 truncate">AI создаст вариации на основе изображения</p>
+          <p className="text-sm font-semibold text-violet-700 flex items-center gap-1">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            Референс активен
+          </p>
+          <p className="text-xs text-violet-600">AI создаст вариации на основе этого изображения</p>
         </div>
         <button
           onClick={onRemove}
-          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+          className="p-2 text-violet-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
         >
           <TrashIcon />
         </button>
@@ -236,6 +248,7 @@ function AIGenerationModal({ isOpen, onClose, onImageGenerated }) {
   const [selectedImageIndex, setSelectedImageIndex] = useState(null);
   const [error, setError] = useState(null);
   const [apiStatus, setApiStatus] = useState({ checked: false, available: true, error: null });
+  const [hasGenerated, setHasGenerated] = useState(false);
   
   const inputRef = useRef(null);
   const modalRef = useRef(null);
@@ -298,6 +311,7 @@ function AIGenerationModal({ isOpen, onClose, onImageGenerated }) {
     setError(null);
     setGeneratedImages([]);
     setSelectedImageIndex(null);
+    setHasGenerated(false);
 
     try {
       const fullPrompt = applyStyleToPrompt(
@@ -317,6 +331,7 @@ function AIGenerationModal({ isOpen, onClose, onImageGenerated }) {
       if (result.images.length > 0) {
         setSelectedImageIndex(0);
       }
+      setHasGenerated(true);
     } catch (err) {
       setError(err.message || 'Ошибка генерации');
     } finally {
@@ -338,11 +353,47 @@ function AIGenerationModal({ isOpen, onClose, onImageGenerated }) {
       setPrompt('');
       setGeneratedImages([]);
       setSelectedImageIndex(null);
+      setHasGenerated(false);
       handleReferenceRemove();
     } catch (err) {
       setError('Не удалось применить изображение');
     }
   }, [selectedImageIndex, generatedImages, onImageGenerated, onClose, handleReferenceRemove]);
+
+  const handleUseAsReference = useCallback(async () => {
+    if (selectedImageIndex === null) return;
+    
+    const selectedImage = generatedImages.find(img => img.index === selectedImageIndex);
+    if (!selectedImage) return;
+
+    try {
+      // Загружаем изображение
+      const img = await loadImageFromDataUrl(selectedImage.dataUrl);
+      
+      // Конвертируем в base64
+      const base64Data = await imageToBase64(img);
+      
+      // Устанавливаем как референс
+      setReferenceImage({
+        ...base64Data,
+        previewUrl: selectedImage.dataUrl
+      });
+      
+      // Очищаем сгенерированные изображения
+      setGeneratedImages([]);
+      setSelectedImageIndex(null);
+      setHasGenerated(false);
+      
+      // Фокусируем на инпуте для нового промпта
+      setTimeout(() => inputRef.current?.focus(), 100);
+    } catch (err) {
+      setError('Не удалось использовать изображение как референс');
+    }
+  }, [selectedImageIndex, generatedImages]);
+
+  const handleRegenerate = useCallback(() => {
+    handleGenerate();
+  }, [handleGenerate]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -472,32 +523,55 @@ function AIGenerationModal({ isOpen, onClose, onImageGenerated }) {
 
         {/* Footer */}
         {apiStatus.available && (
-          <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex gap-3">
-            <button
-              onClick={handleGenerate}
-              disabled={!prompt.trim() || isGenerating}
-              className="flex-1 py-3 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl font-medium hover:from-violet-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/30 flex items-center justify-center gap-2"
-            >
-              {isGenerating ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Создание...
-                </>
-              ) : (
-                <>
-                  <SparklesIcon />
-                  Создать
-                </>
-              )}
-            </button>
-            
-            {generatedImages.length > 0 && selectedImageIndex !== null && (
+          <div className="px-6 py-4 border-t border-gray-100 bg-gray-50">
+            {hasGenerated && generatedImages.length > 0 && selectedImageIndex !== null ? (
+              // Показываем три кнопки после генерации
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRegenerate}
+                  disabled={isGenerating || !prompt.trim()}
+                  className="flex-1 py-3 bg-white border-2 border-violet-500 text-violet-600 rounded-xl font-medium hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                >
+                  <RefreshIcon />
+                  <span className="text-sm">Пересоздать</span>
+                </button>
+                
+                <button
+                  onClick={handleUseAsReference}
+                  disabled={isGenerating}
+                  className="flex-1 py-3 bg-blue-500 text-white rounded-xl font-medium hover:bg-blue-600 disabled:opacity-50 transition-all shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2"
+                >
+                  <ImageIcon />
+                  <span className="text-sm">Как референс</span>
+                </button>
+                
+                <button
+                  onClick={handleApply}
+                  disabled={isGenerating}
+                  className="flex-1 py-3 bg-green-500 text-white rounded-xl font-medium hover:bg-green-600 disabled:opacity-50 transition-all shadow-lg shadow-green-500/30 flex items-center justify-center gap-2"
+                >
+                  <CheckIcon />
+                  <span className="text-sm">Применить</span>
+                </button>
+              </div>
+            ) : (
+              // Показываем кнопку "Создать" до генерации
               <button
-                onClick={handleApply}
-                disabled={isGenerating}
-                className="px-6 py-3 bg-green-500 text-white rounded-xl font-medium hover:bg-green-600 disabled:opacity-50 transition-all shadow-lg shadow-green-500/30"
+                onClick={handleGenerate}
+                disabled={!prompt.trim() || isGenerating}
+                className="w-full py-3 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-xl font-medium hover:from-violet-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/30 flex items-center justify-center gap-2"
               >
-                Применить
+                {isGenerating ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Создание...
+                  </>
+                ) : (
+                  <>
+                    <SparklesIcon />
+                    Создать
+                  </>
+                )}
               </button>
             )}
           </div>
