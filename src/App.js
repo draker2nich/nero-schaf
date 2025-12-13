@@ -1,9 +1,9 @@
 import React from 'react';
-import GarmentDesigner from './components/GarmentDesigner';
+import GarmentDesignerWithLayers from './components/GarmentDesignerWithLayers';
 import './index.css';
 
 function App() {
-  return <GarmentDesigner />;
+  return <GarmentDesignerWithLayers />;
 }
 
 export default App;

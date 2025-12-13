@@ -1,7 +1,8 @@
 import React, { memo, useCallback } from 'react';
 import { TOOLS, COLOR_PRESETS } from '../utils/constants';
+import LayersPanel from './LayersPanel';
 
-// Иконки как компоненты
+// Иконки
 const PencilIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
@@ -39,13 +40,6 @@ const UndoIcon = () => (
 const RedoIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" />
-  </svg>
-);
-
-const TrashIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
   </svg>
 );
 
@@ -166,7 +160,7 @@ const TransformPanel = memo(({
   </div>
 ));
 
-function Toolbar({
+function ToolbarWithLayers({
   tool,
   setTool,
   brushSize,
@@ -175,7 +169,6 @@ function Toolbar({
   setBrushColor,
   onImageUpload,
   onAIGenerate,
-  onClear,
   onUndo,
   onRedo,
   canUndo,
@@ -185,7 +178,18 @@ function Toolbar({
   setImageTransform,
   onApplyImage,
   onCancelImage,
-  isMobile
+  isMobile,
+  // Пропсы для слоёв
+  layers,
+  activeLayerId,
+  onSelectLayer,
+  onToggleLayerVisibility,
+  onMoveLayerUp,
+  onMoveLayerDown,
+  onDeleteLayer,
+  onAddDrawingLayer,
+  onClearLayer,
+  onClearAll
 }) {
   const fileInputRef = React.useRef(null);
   
@@ -215,6 +219,22 @@ function Toolbar({
   return (
     <div className="p-4">
       <div className="space-y-5">
+        {/* Панель слоёв */}
+        <LayersPanel
+          layers={layers}
+          activeLayerId={activeLayerId}
+          onSelectLayer={onSelectLayer}
+          onToggleVisibility={onToggleLayerVisibility}
+          onMoveUp={onMoveLayerUp}
+          onMoveDown={onMoveLayerDown}
+          onDelete={onDeleteLayer}
+          onAddDrawingLayer={onAddDrawingLayer}
+          onClearLayer={onClearLayer}
+          onClearAll={onClearAll}
+        />
+
+        <div className="border-t border-gray-200 my-4" />
+
         <h3 className="text-sm font-semibold text-gray-900">Инструменты</h3>
 
         {/* Основные инструменты */}
@@ -300,37 +320,28 @@ function Toolbar({
 
         <div className="border-t border-gray-200 my-4" />
 
-        <div className="space-y-2">
+        {/* Undo/Redo */}
+        <div className="grid grid-cols-2 gap-2">
           <button
-            onClick={onClear}
-            className="w-full py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-all flex items-center justify-center gap-2"
+            onClick={onUndo}
+            disabled={!canUndo}
+            className="py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1"
           >
-            <TrashIcon />
-            Очистить холст
+            <UndoIcon />
+            <span className="text-xs">Отменить</span>
           </button>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={onUndo}
-              disabled={!canUndo}
-              className="py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1"
-            >
-              <UndoIcon />
-              <span className="text-xs">Отменить</span>
-            </button>
-            <button
-              onClick={onRedo}
-              disabled={!canRedo}
-              className="py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1"
-            >
-              <RedoIcon />
-              <span className="text-xs">Повторить</span>
-            </button>
-          </div>
+          <button
+            onClick={onRedo}
+            disabled={!canRedo}
+            className="py-2.5 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1"
+          >
+            <RedoIcon />
+            <span className="text-xs">Повторить</span>
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-export default memo(Toolbar);
+export default memo(ToolbarWithLayers);

@@ -2,10 +2,10 @@ import { useState, useCallback, useRef } from 'react';
 import { CANVAS_SIZE } from '../utils/constants';
 
 /**
- * Хук для работы с трансформацией изображения
+ * Хук для работы с трансформацией изображения (для системы слоёв)
  */
-export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory, onCanvasUpdate) {
-  const [designImage, setDesignImage] = useState(null);
+export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveToHistory, onCanvasUpdate) {
+  const [pendingImage, setPendingImage] = useState(null);
   const [imageTransform, setImageTransform] = useState({
     x: 0, y: 0, scale: 1, rotation: 0
   });
@@ -25,33 +25,25 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        setDesignImage(img);
+        setPendingImage(img);
         setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
         setIsTransformMode(true);
-        
-        setTimeout(() => {
-          onCanvasUpdate(true);
-        }, 0);
       };
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
     
     event.target.value = '';
-  }, [onCanvasUpdate]);
+  }, []);
 
   // Прямая установка изображения (для AI генерации)
   const setDesignImageDirect = useCallback((img) => {
     if (!img) return;
     
-    setDesignImage(img);
+    setPendingImage(img);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     setIsTransformMode(true);
-    
-    setTimeout(() => {
-      onCanvasUpdate(true);
-    }, 0);
-  }, [onCanvasUpdate]);
+  }, []);
 
   // Начало перетаскивания
   const startDrag = useCallback((x, y, touches) => {
@@ -107,10 +99,11 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     lastTouchDistanceRef.current = 0;
   }, []);
 
-  // Применение изображения к canvas
+  // Применение изображения как нового слоя
   const applyImage = useCallback(() => {
-    if (!designImage) return;
+    if (!pendingImage) return;
     
+    // Создаём временный canvas с трансформированным изображением
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = CANVAS_SIZE;
     tempCanvas.height = CANVAS_SIZE;
@@ -124,56 +117,48 @@ export function useImageTransform(drawingLayerRef, uvLayoutImage, saveToHistory,
     tempCtx.save();
     tempCtx.translate(centerX, centerY);
     tempCtx.rotate(imageTransform.rotation * Math.PI / 180);
-    tempCtx.drawImage(designImage, -imgW / 2, -imgH / 2, imgW, imgH);
+    tempCtx.drawImage(pendingImage, -imgW / 2, -imgH / 2, imgW, imgH);
     tempCtx.restore();
     
+    // Применяем UV маску
     if (uvLayoutImage) {
       tempCtx.globalCompositeOperation = 'destination-in';
       tempCtx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
     }
     
-    if (!drawingLayerRef.current) {
-      drawingLayerRef.current = document.createElement('canvas');
-      drawingLayerRef.current.width = CANVAS_SIZE;
-      drawingLayerRef.current.height = CANVAS_SIZE;
-    }
+    // Создаём новый слой с изображением
+    const newLayer = addImageLayer(pendingImage, imageTransform);
     
-    const drawingCtx = drawingLayerRef.current.getContext('2d');
-    drawingCtx.drawImage(tempCanvas, 0, 0);
+    // Копируем результат на canvas слоя
+    newLayer.ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    newLayer.ctx.drawImage(tempCanvas, 0, 0);
     
-    setDesignImage(null);
-    setIsTransformMode(false);
-    saveToHistory();
-    onCanvasUpdate(true);
-  }, [designImage, imageTransform, uvLayoutImage, drawingLayerRef, saveToHistory, onCanvasUpdate]);
-
-  // ИСПРАВЛЕНО: Отмена трансформации с принудительным обновлением 3D модели
-  const cancelTransform = useCallback(() => {
-    // Сначала сбрасываем состояние
-    setDesignImage(null);
+    // Сброс состояния
+    setPendingImage(null);
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     
-    // Используем setTimeout чтобы дождаться обновления state
-    // и только потом обновить canvas и 3D текстуру
-    setTimeout(() => {
-      onCanvasUpdate(true);
-      // Дополнительный вызов через RAF для гарантии синхронизации с 3D
-      requestAnimationFrame(() => {
-        onCanvasUpdate(true);
-      });
-    }, 0);
+    saveToHistory?.();
+    onCanvasUpdate?.(true);
+  }, [pendingImage, imageTransform, uvLayoutImage, addImageLayer, saveToHistory, onCanvasUpdate]);
+
+  // Отмена трансформации
+  const cancelTransform = useCallback(() => {
+    setPendingImage(null);
+    setIsTransformMode(false);
+    setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+    onCanvasUpdate?.(true);
   }, [onCanvasUpdate]);
 
   // Сброс состояния изображения
   const resetImageState = useCallback(() => {
-    setDesignImage(null);
+    setPendingImage(null);
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
   }, []);
 
   return {
-    designImage,
+    pendingImage,
     imageTransform,
     setImageTransform,
     isTransformMode,
