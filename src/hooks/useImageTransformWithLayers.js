@@ -7,7 +7,10 @@ import { CANVAS_SIZE } from '../utils/constants';
 export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveToHistory, onCanvasUpdate) {
   const [pendingImage, setPendingImage] = useState(null);
   const [imageTransform, setImageTransform] = useState({
-    x: 0, y: 0, scale: 1, rotation: 0
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation: 0
   });
   const [isTransformMode, setIsTransformMode] = useState(false);
   
@@ -29,10 +32,17 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
         setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
         setIsTransformMode(true);
       };
+      img.onerror = () => {
+        console.error('Ошибка загрузки изображения');
+      };
       img.src = e.target.result;
+    };
+    reader.onerror = () => {
+      console.error('Ошибка чтения файла');
     };
     reader.readAsDataURL(file);
     
+    // Сброс input для повторной загрузки того же файла
     event.target.value = '';
   }, []);
 
@@ -129,9 +139,11 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     // Создаём новый слой с изображением
     const newLayer = addImageLayer(pendingImage, imageTransform);
     
-    // Копируем результат на canvas слоя
-    newLayer.ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    newLayer.ctx.drawImage(tempCanvas, 0, 0);
+    if (newLayer && newLayer.ctx) {
+      // Копируем результат на canvas слоя
+      newLayer.ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      newLayer.ctx.drawImage(tempCanvas, 0, 0);
+    }
     
     // Сброс состояния
     setPendingImage(null);

@@ -23,3 +23,6 @@ export const PERFORMANCE = {
   MIN_DRAW_DISTANCE: 3, // Минимальное расстояние между точками
   TRANSFORM_THROTTLE_MS: 32 // ~30fps для трансформации изображения
 };
+
+// Реэкспорт типов слоёв для удобства
+export { LAYER_TYPES } from './layerTypes';
