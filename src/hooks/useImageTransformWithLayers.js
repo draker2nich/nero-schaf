@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { CANVAS_SIZE } from '../utils/constants';
 
 /**
@@ -18,6 +18,19 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const lastTouchDistanceRef = useRef(0);
+  
+  // Храним актуальный callback в ref
+  const onCanvasUpdateRef = useRef(onCanvasUpdate);
+  useEffect(() => {
+    onCanvasUpdateRef.current = onCanvasUpdate;
+  }, [onCanvasUpdate]);
+  
+  // Вызов обновления
+  const triggerUpdate = useCallback((force = false) => {
+    if (onCanvasUpdateRef.current) {
+      onCanvasUpdateRef.current(force);
+    }
+  }, []);
 
   // Загрузка изображения из файла
   const handleImageUpload = useCallback((event) => {
@@ -31,6 +44,8 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
         setPendingImage(img);
         setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
         setIsTransformMode(true);
+        // Обновляем после установки состояния
+        requestAnimationFrame(() => triggerUpdate(true));
       };
       img.onerror = () => {
         console.error('Ошибка загрузки изображения');
@@ -44,7 +59,7 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     
     // Сброс input для повторной загрузки того же файла
     event.target.value = '';
-  }, []);
+  }, [triggerUpdate]);
 
   // Прямая установка изображения (для AI генерации)
   const setDesignImageDirect = useCallback((img) => {
@@ -53,7 +68,9 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     setPendingImage(img);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     setIsTransformMode(true);
-  }, []);
+    // Обновляем после установки состояния
+    requestAnimationFrame(() => triggerUpdate(true));
+  }, [triggerUpdate]);
 
   // Начало перетаскивания
   const startDrag = useCallback((x, y, touches) => {
@@ -82,26 +99,34 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
       
       if (lastTouchDistanceRef.current > 0) {
         const scale = distance / lastTouchDistanceRef.current;
-        setImageTransform(prev => ({
-          ...prev,
-          scale: Math.max(0.1, Math.min(3, prev.scale * scale))
-        }));
+        setImageTransform(prev => {
+          const newTransform = {
+            ...prev,
+            scale: Math.max(0.1, Math.min(3, prev.scale * scale))
+          };
+          return newTransform;
+        });
+        triggerUpdate();
       }
       lastTouchDistanceRef.current = distance;
       return true;
     }
 
     if (isDraggingRef.current) {
-      setImageTransform(prev => ({
-        ...prev,
-        x: x - dragStartRef.current.x,
-        y: y - dragStartRef.current.y
-      }));
+      setImageTransform(prev => {
+        const newTransform = {
+          ...prev,
+          x: x - dragStartRef.current.x,
+          y: y - dragStartRef.current.y
+        };
+        return newTransform;
+      });
+      triggerUpdate();
       return true;
     }
     
     return false;
-  }, []);
+  }, [triggerUpdate]);
 
   // Окончание перетаскивания
   const stopDrag = useCallback(() => {
@@ -150,17 +175,21 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     
-    saveToHistory?.();
-    onCanvasUpdate?.(true);
-  }, [pendingImage, imageTransform, uvLayoutImage, addImageLayer, saveToHistory, onCanvasUpdate]);
+    if (saveToHistory) {
+      saveToHistory();
+    }
+    
+    // Принудительное обновление после применения
+    requestAnimationFrame(() => triggerUpdate(true));
+  }, [pendingImage, imageTransform, uvLayoutImage, addImageLayer, saveToHistory, triggerUpdate]);
 
   // Отмена трансформации
   const cancelTransform = useCallback(() => {
     setPendingImage(null);
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
-    onCanvasUpdate?.(true);
-  }, [onCanvasUpdate]);
+    triggerUpdate(true);
+  }, [triggerUpdate]);
 
   // Сброс состояния изображения
   const resetImageState = useCallback(() => {

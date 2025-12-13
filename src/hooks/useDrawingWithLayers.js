@@ -20,6 +20,12 @@ export function useDrawingWithLayers(uvLayoutImage, getActiveLayer, addDrawingLa
   const currentDrawingLayerRef = useRef(null);
   const initializedRef = useRef(false);
   const needNewLayerRef = useRef(false);
+  
+  // Храним актуальный callback в ref
+  const onCanvasUpdateRef = useRef(onCanvasUpdate);
+  useEffect(() => {
+    onCanvasUpdateRef.current = onCanvasUpdate;
+  }, [onCanvasUpdate]);
 
   // Инициализация UV маски
   useEffect(() => {
@@ -36,7 +42,6 @@ export function useDrawingWithLayers(uvLayoutImage, getActiveLayer, addDrawingLa
     // Для ластика работаем на текущем слое (любого типа)
     if (tool === TOOLS.ERASE) {
       if (!activeLayer) {
-        // Если нет активного слоя, создаем новый для работы
         needNewLayerRef.current = true;
       } else {
         needNewLayerRef.current = false;
@@ -92,13 +97,22 @@ export function useDrawingWithLayers(uvLayoutImage, getActiveLayer, addDrawingLa
       applyUVMask(layer.canvas, uvLayoutImage);
     }
     
-    onCanvasUpdate?.();
-  }, [uvLayoutImage, addDrawingLayer, onCanvasUpdate]);
+    // Вызываем обновление canvas напрямую
+    if (onCanvasUpdateRef.current) {
+      onCanvasUpdateRef.current();
+    }
+  }, [uvLayoutImage, addDrawingLayer]);
 
   // Окончание рисования
   const stopDrawing = useCallback(() => {
     if (isDrawingRef.current) {
-      saveToHistory?.();
+      if (saveToHistory) {
+        saveToHistory();
+      }
+      // Финальное обновление после завершения рисования
+      if (onCanvasUpdateRef.current) {
+        onCanvasUpdateRef.current(true);
+      }
     }
     setIsDrawing(false);
     isDrawingRef.current = false;

@@ -55,17 +55,23 @@ function GarmentDesignerWithLayers() {
   const [showTools, setShowTools] = useState(true);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   
+  // Счётчик для принудительного ре-рендера
+  const [updateTrigger, setUpdateTrigger] = useState(0);
+  
   const lastPointerTimeRef = useRef(0);
-  const canvasUpdateScheduledRef = useRef(false);
-  const layersUpdateRef = useRef(null);
+  const layersRef = useRef([]);
+  const pendingImageRef = useRef(null);
+  const imageTransformRef = useRef({ x: 0, y: 0, scale: 1, rotation: 0 });
   
   const isMobile = useIsMobile();
   const uvLayoutImage = useUVLayout();
 
-  const renderUVCanvas = useCallback((layersData, pendingImg, imgTransform) => {
+  // Функция рендеринга UV canvas
+  const renderUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
+    
     if (!uvCtxRef.current) {
-      uvCtxRef.current = uvCanvasRef.current.getContext('2d', { alpha: false, desynchronized: true });
+      uvCtxRef.current = uvCanvasRef.current.getContext('2d', { alpha: false });
     }
     const ctx = uvCtxRef.current;
     
@@ -74,8 +80,9 @@ function GarmentDesignerWithLayers() {
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
     // Рисуем слои
-    if (layersData && layersData.length > 0) {
-      layersData.forEach(layer => {
+    const currentLayers = layersRef.current;
+    if (currentLayers && currentLayers.length > 0) {
+      currentLayers.forEach(layer => {
         if (layer.visible && layer.canvas) {
           ctx.globalAlpha = layer.opacity || 1;
           ctx.drawImage(layer.canvas, 0, 0);
@@ -85,6 +92,8 @@ function GarmentDesignerWithLayers() {
     }
     
     // Рисуем pending изображение (в режиме трансформации)
+    const pendingImg = pendingImageRef.current;
+    const imgTransform = imageTransformRef.current;
     if (pendingImg && imgTransform) {
       const imgW = CANVAS_SIZE * imgTransform.scale;
       const imgH = CANVAS_SIZE * imgTransform.scale;
@@ -103,31 +112,26 @@ function GarmentDesignerWithLayers() {
       ctx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
       ctx.globalAlpha = 1.0;
     }
+    
+    // Обновляем текстуру 3D модели
+    if (textureRef.current) {
+      textureRef.current.needsUpdate = true;
+    }
   }, [uvLayoutImage]);
 
-  const updateUVCanvas = useCallback((force = false, layersData, pendingImg, imgTransform) => {
-    if (force) {
-      canvasUpdateScheduledRef.current = false;
-      renderUVCanvas(layersData, pendingImg, imgTransform);
-      // Немедленно обновляем текстуру при force
-      if (textureRef.current) {
-        textureRef.current.needsUpdate = true;
-      }
-      return;
+  // Единая функция обновления canvas и текстуры
+  const updateCanvas = useCallback((force = false) => {
+    renderUVCanvas();
+    // Дополнительно триггерим обновление текстуры
+    if (textureRef.current) {
+      textureRef.current.needsUpdate = true;
     }
-    if (canvasUpdateScheduledRef.current) return;
-    canvasUpdateScheduledRef.current = true;
-    requestAnimationFrame(() => {
-      canvasUpdateScheduledRef.current = false;
-      renderUVCanvas(layersData, pendingImg, imgTransform);
-      // Немедленно обновляем текстуру после рендеринга
-      if (textureRef.current) {
-        textureRef.current.needsUpdate = true;
-      }
-    });
+    if (force) {
+      setUpdateTrigger(prev => prev + 1);
+    }
   }, [renderUVCanvas]);
 
-  // Хук слоёв
+  // Хук слоёв - передаём updateCanvas как callback
   const {
     layers,
     activeLayerId,
@@ -146,7 +150,13 @@ function GarmentDesignerWithLayers() {
     redo,
     canUndo,
     canRedo
-  } = useLayers((force) => layersUpdateRef.current?.(force));
+  } = useLayers(updateCanvas);
+
+  // Синхронизируем layers с ref
+  useEffect(() => {
+    layersRef.current = layers;
+    renderUVCanvas();
+  }, [layers, renderUVCanvas]);
 
   // Хук рисования
   const { isDrawing, startDrawing, stopDrawing, drawOnCanvas } = useDrawingWithLayers(
@@ -154,7 +164,7 @@ function GarmentDesignerWithLayers() {
     getActiveLayer,
     addDrawingLayer,
     saveToHistory,
-    () => layersUpdateRef.current?.()
+    updateCanvas
   );
 
   // Хук трансформации изображения
@@ -174,18 +184,15 @@ function GarmentDesignerWithLayers() {
     uvLayoutImage,
     addImageLayer,
     saveToHistory,
-    (force) => layersUpdateRef.current?.(force)
+    updateCanvas
   );
 
-  // Callback для обновления canvas
-  layersUpdateRef.current = useCallback((force = false) => {
-    updateUVCanvas(force, layers, pendingImage, imageTransform);
-  }, [updateUVCanvas, layers, pendingImage, imageTransform]);
-
-  // Обновляем canvas при изменении слоёв или трансформации
+  // Синхронизируем pendingImage и imageTransform с refs
   useEffect(() => {
-    updateUVCanvas(true, layers, pendingImage, imageTransform);
-  }, [layers, pendingImage, imageTransform, updateUVCanvas]);
+    pendingImageRef.current = pendingImage;
+    imageTransformRef.current = imageTransform;
+    renderUVCanvas();
+  }, [pendingImage, imageTransform, renderUVCanvas]);
 
   // Callback для AI генерации
   const handleAIImageGenerated = useCallback((img) => {
@@ -214,15 +221,13 @@ function GarmentDesignerWithLayers() {
     setupLights(scene);
     setupGround(scene);
     
-    let lastRenderTime = 0;
-    const animate = (time) => {
+    // Анимационный цикл - рендерим каждый кадр
+    const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
-      if (time - lastRenderTime < 33) return;
-      lastRenderTime = time;
       controls.update();
       renderer.render(scene, camera);
     };
-    animate(0);
+    animate();
     
     const handleResize = () => {
       if (!container) return;
@@ -259,13 +264,16 @@ function GarmentDesignerWithLayers() {
         sceneRef.current.add(loadedModel);
         positionCamera(cameraRef.current, controlsRef.current);
         setLoading(false);
+        
+        // Первоначальное обновление
+        renderUVCanvas();
       },
       () => {
         modelLoadedRef.current = false;
         setLoading(false);
       }
     );
-  }, []);
+  }, [renderUVCanvas]);
 
   // Обработчики pointer событий
   const handlePointerDown = useCallback((e) => {
