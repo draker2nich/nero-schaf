@@ -30,15 +30,26 @@ export function useDrawingWithLayers(uvLayoutImage, getActiveLayer, addDrawingLa
   }, [uvLayoutImage]);
 
   // Начало рисования - определяем, на каком слое рисовать
-  const startDrawing = useCallback(() => {
+  const startDrawing = useCallback((tool) => {
     const activeLayer = getActiveLayer();
     
-    // Если активный слой не подходит для рисования, создаём новый
-    if (!activeLayer || activeLayer.type !== LAYER_TYPES.DRAWING) {
-      needNewLayerRef.current = true;
+    // Для ластика работаем на текущем слое (любого типа)
+    if (tool === TOOLS.ERASE) {
+      if (!activeLayer) {
+        // Если нет активного слоя, создаем новый для работы
+        needNewLayerRef.current = true;
+      } else {
+        needNewLayerRef.current = false;
+        currentDrawingLayerRef.current = activeLayer;
+      }
     } else {
-      needNewLayerRef.current = false;
-      currentDrawingLayerRef.current = activeLayer;
+      // Для кисти создаём новый слой, если активный не подходит
+      if (!activeLayer || activeLayer.type !== LAYER_TYPES.DRAWING) {
+        needNewLayerRef.current = true;
+      } else {
+        needNewLayerRef.current = false;
+        currentDrawingLayerRef.current = activeLayer;
+      }
     }
     
     setIsDrawing(true);
@@ -50,8 +61,8 @@ export function useDrawingWithLayers(uvLayoutImage, getActiveLayer, addDrawingLa
   const drawOnCanvas = useCallback((x, y, tool, brushColor, brushSize, forceNew = false) => {
     if (!isDrawingRef.current) return;
     
-    // Создаём новый слой при первом касании, если нужно
-    if (needNewLayerRef.current) {
+    // Создаём новый слой при первом касании, если нужно (только для кисти)
+    if (needNewLayerRef.current && tool === TOOLS.DRAW) {
       const newLayer = addDrawingLayer();
       currentDrawingLayerRef.current = newLayer;
       needNewLayerRef.current = false;
@@ -76,7 +87,7 @@ export function useDrawingWithLayers(uvLayoutImage, getActiveLayer, addDrawingLa
       lastDrawPointRef.current = { x, y };
     }
     
-    // Применяем UV маску только для рисования
+    // Применяем UV маску только для рисования (не для стирания)
     if (tool === TOOLS.DRAW && uvLayoutImage && layer.canvas) {
       applyUVMask(layer.canvas, uvLayoutImage);
     }

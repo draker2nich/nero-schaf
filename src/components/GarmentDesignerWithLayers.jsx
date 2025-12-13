@@ -56,21 +56,11 @@ function GarmentDesignerWithLayers() {
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   
   const lastPointerTimeRef = useRef(0);
-  const textureUpdateScheduledRef = useRef(false);
   const canvasUpdateScheduledRef = useRef(false);
   const layersUpdateRef = useRef(null);
   
   const isMobile = useIsMobile();
   const uvLayoutImage = useUVLayout();
-
-  const scheduleTextureUpdate = useCallback(() => {
-    if (textureUpdateScheduledRef.current || !textureRef.current) return;
-    textureUpdateScheduledRef.current = true;
-    setTimeout(() => {
-      if (textureRef.current) textureRef.current.needsUpdate = true;
-      textureUpdateScheduledRef.current = false;
-    }, PERFORMANCE.TEXTURE_UPDATE_MS);
-  }, []);
 
   const renderUVCanvas = useCallback((layersData, pendingImg, imgTransform) => {
     if (!uvCanvasRef.current) return;
@@ -119,7 +109,10 @@ function GarmentDesignerWithLayers() {
     if (force) {
       canvasUpdateScheduledRef.current = false;
       renderUVCanvas(layersData, pendingImg, imgTransform);
-      if (textureRef.current) textureRef.current.needsUpdate = true;
+      // Немедленно обновляем текстуру при force
+      if (textureRef.current) {
+        textureRef.current.needsUpdate = true;
+      }
       return;
     }
     if (canvasUpdateScheduledRef.current) return;
@@ -127,9 +120,12 @@ function GarmentDesignerWithLayers() {
     requestAnimationFrame(() => {
       canvasUpdateScheduledRef.current = false;
       renderUVCanvas(layersData, pendingImg, imgTransform);
-      scheduleTextureUpdate();
+      // Немедленно обновляем текстуру после рендеринга
+      if (textureRef.current) {
+        textureRef.current.needsUpdate = true;
+      }
     });
-  }, [renderUVCanvas, scheduleTextureUpdate]);
+  }, [renderUVCanvas]);
 
   // Хук слоёв
   const {
@@ -281,7 +277,7 @@ function GarmentDesignerWithLayers() {
       return;
     }
     
-    startDrawing();
+    startDrawing(tool);
     drawOnCanvas(coords.x, coords.y, tool, brushColor, brushSize, true);
   }, [isTransformMode, pendingImage, tool, brushColor, brushSize, startDrag, startDrawing, drawOnCanvas]);
 
