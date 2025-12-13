@@ -14,25 +14,27 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
   });
   const [isTransformMode, setIsTransformMode] = useState(false);
   
-  // Состояние для drag
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const lastTouchDistanceRef = useRef(0);
   
-  // Храним актуальный callback в ref
   const onCanvasUpdateRef = useRef(onCanvasUpdate);
+  const saveToHistoryRef = useRef(saveToHistory);
+  
   useEffect(() => {
     onCanvasUpdateRef.current = onCanvasUpdate;
   }, [onCanvasUpdate]);
   
-  // Вызов обновления
+  useEffect(() => {
+    saveToHistoryRef.current = saveToHistory;
+  }, [saveToHistory]);
+  
   const triggerUpdate = useCallback((force = false) => {
     if (onCanvasUpdateRef.current) {
       onCanvasUpdateRef.current(force);
     }
   }, []);
 
-  // Загрузка изображения из файла
   const handleImageUpload = useCallback((event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -44,35 +46,24 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
         setPendingImage(img);
         setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
         setIsTransformMode(true);
-        // Обновляем после установки состояния
         requestAnimationFrame(() => triggerUpdate(true));
       };
-      img.onerror = () => {
-        console.error('Ошибка загрузки изображения');
-      };
+      img.onerror = () => console.error('Ошибка загрузки изображения');
       img.src = e.target.result;
     };
-    reader.onerror = () => {
-      console.error('Ошибка чтения файла');
-    };
+    reader.onerror = () => console.error('Ошибка чтения файла');
     reader.readAsDataURL(file);
-    
-    // Сброс input для повторной загрузки того же файла
     event.target.value = '';
   }, [triggerUpdate]);
 
-  // Прямая установка изображения (для AI генерации)
   const setDesignImageDirect = useCallback((img) => {
     if (!img) return;
-    
     setPendingImage(img);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     setIsTransformMode(true);
-    // Обновляем после установки состояния
     requestAnimationFrame(() => triggerUpdate(true));
   }, [triggerUpdate]);
 
-  // Начало перетаскивания
   const startDrag = useCallback((x, y, touches) => {
     if (touches?.length === 2) {
       const t1 = touches[0];
@@ -90,7 +81,6 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     }
   }, [imageTransform.x, imageTransform.y]);
 
-  // Перетаскивание
   const drag = useCallback((x, y, touches) => {
     if (touches?.length === 2) {
       const t1 = touches[0];
@@ -99,13 +89,10 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
       
       if (lastTouchDistanceRef.current > 0) {
         const scale = distance / lastTouchDistanceRef.current;
-        setImageTransform(prev => {
-          const newTransform = {
-            ...prev,
-            scale: Math.max(0.1, Math.min(3, prev.scale * scale))
-          };
-          return newTransform;
-        });
+        setImageTransform(prev => ({
+          ...prev,
+          scale: Math.max(0.1, Math.min(3, prev.scale * scale))
+        }));
         triggerUpdate();
       }
       lastTouchDistanceRef.current = distance;
@@ -113,14 +100,11 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     }
 
     if (isDraggingRef.current) {
-      setImageTransform(prev => {
-        const newTransform = {
-          ...prev,
-          x: x - dragStartRef.current.x,
-          y: y - dragStartRef.current.y
-        };
-        return newTransform;
-      });
+      setImageTransform(prev => ({
+        ...prev,
+        x: x - dragStartRef.current.x,
+        y: y - dragStartRef.current.y
+      }));
       triggerUpdate();
       return true;
     }
@@ -128,15 +112,16 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     return false;
   }, [triggerUpdate]);
 
-  // Окончание перетаскивания
   const stopDrag = useCallback(() => {
     isDraggingRef.current = false;
     lastTouchDistanceRef.current = 0;
   }, []);
 
-  // Применение изображения как нового слоя
   const applyImage = useCallback(() => {
     if (!pendingImage) return;
+    
+    const currentTransform = { ...imageTransform };
+    const currentImage = pendingImage;
     
     // Создаём временный canvas с трансформированным изображением
     const tempCanvas = document.createElement('canvas');
@@ -144,15 +129,15 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     tempCanvas.height = CANVAS_SIZE;
     const tempCtx = tempCanvas.getContext('2d');
     
-    const imgW = CANVAS_SIZE * imageTransform.scale;
-    const imgH = CANVAS_SIZE * imageTransform.scale;
-    const centerX = CANVAS_SIZE / 2 + imageTransform.x;
-    const centerY = CANVAS_SIZE / 2 + imageTransform.y;
+    const imgW = CANVAS_SIZE * currentTransform.scale;
+    const imgH = CANVAS_SIZE * currentTransform.scale;
+    const centerX = CANVAS_SIZE / 2 + currentTransform.x;
+    const centerY = CANVAS_SIZE / 2 + currentTransform.y;
     
     tempCtx.save();
     tempCtx.translate(centerX, centerY);
-    tempCtx.rotate(imageTransform.rotation * Math.PI / 180);
-    tempCtx.drawImage(pendingImage, -imgW / 2, -imgH / 2, imgW, imgH);
+    tempCtx.rotate(currentTransform.rotation * Math.PI / 180);
+    tempCtx.drawImage(currentImage, -imgW / 2, -imgH / 2, imgW, imgH);
     tempCtx.restore();
     
     // Применяем UV маску
@@ -162,10 +147,9 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     }
     
     // Создаём новый слой с изображением
-    const newLayer = addImageLayer(pendingImage, imageTransform);
+    const newLayer = addImageLayer(currentImage, currentTransform);
     
     if (newLayer && newLayer.ctx) {
-      // Копируем результат на canvas слоя
       newLayer.ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
       newLayer.ctx.drawImage(tempCanvas, 0, 0);
     }
@@ -175,15 +159,17 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     
-    if (saveToHistory) {
-      saveToHistory();
-    }
-    
-    // Принудительное обновление после применения
-    requestAnimationFrame(() => triggerUpdate(true));
-  }, [pendingImage, imageTransform, uvLayoutImage, addImageLayer, saveToHistory, triggerUpdate]);
+    // ВАЖНО: Используем setTimeout чтобы дождаться обновления layers в useLayers
+    // перед сохранением в историю. Это гарантирует, что новый слой
+    // будет включён в snapshot истории.
+    setTimeout(() => {
+      if (saveToHistoryRef.current) {
+        saveToHistoryRef.current();
+      }
+      triggerUpdate(true);
+    }, 50);
+  }, [pendingImage, imageTransform, uvLayoutImage, addImageLayer, triggerUpdate]);
 
-  // Отмена трансформации
   const cancelTransform = useCallback(() => {
     setPendingImage(null);
     setIsTransformMode(false);
@@ -191,7 +177,6 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     triggerUpdate(true);
   }, [triggerUpdate]);
 
-  // Сброс состояния изображения
   const resetImageState = useCallback(() => {
     setPendingImage(null);
     setIsTransformMode(false);

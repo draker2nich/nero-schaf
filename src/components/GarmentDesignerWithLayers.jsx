@@ -23,14 +23,27 @@ function useIsMobile() {
   return isMobile;
 }
 
-function useUVLayout() {
+function useUVLayout(onLoad) {
   const [uvLayoutImage, setUvLayoutImage] = useState(null);
+  const onLoadRef = useRef(onLoad);
+  
+  useEffect(() => {
+    onLoadRef.current = onLoad;
+  }, [onLoad]);
+  
   useEffect(() => {
     const img = new Image();
-    img.onload = () => setUvLayoutImage(img);
+    img.onload = () => {
+      setUvLayoutImage(img);
+      // Вызываем callback после загрузки
+      if (onLoadRef.current) {
+        onLoadRef.current();
+      }
+    };
     img.onerror = () => console.error('Не удалось загрузить UV разметку');
     img.src = UV_LAYOUT_PATH;
   }, []);
+  
   return uvLayoutImage;
 }
 
@@ -62,11 +75,11 @@ function GarmentDesignerWithLayers() {
   const layersRef = useRef([]);
   const pendingImageRef = useRef(null);
   const imageTransformRef = useRef({ x: 0, y: 0, scale: 1, rotation: 0 });
+  const uvLayoutImageRef = useRef(null);
   
   const isMobile = useIsMobile();
-  const uvLayoutImage = useUVLayout();
 
-  // Функция рендеринга UV canvas
+  // Функция рендеринга UV canvas - объявляем до использования
   const renderUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
     
@@ -106,7 +119,8 @@ function GarmentDesignerWithLayers() {
       ctx.restore();
     }
     
-    // UV разметка поверх
+    // UV разметка поверх - используем ref для актуального значения
+    const uvLayoutImage = uvLayoutImageRef.current;
     if (uvLayoutImage) {
       ctx.globalAlpha = 0.2;
       ctx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
@@ -117,7 +131,24 @@ function GarmentDesignerWithLayers() {
     if (textureRef.current) {
       textureRef.current.needsUpdate = true;
     }
-  }, [uvLayoutImage]);
+  }, []);
+
+  // Callback для загрузки UV layout
+  const handleUVLayoutLoaded = useCallback(() => {
+    // Перерисовываем canvas после загрузки UV layout
+    renderUVCanvas();
+  }, [renderUVCanvas]);
+
+  // Загружаем UV layout с callback
+  const uvLayoutImage = useUVLayout(handleUVLayoutLoaded);
+  
+  // Синхронизируем uvLayoutImage с ref
+  useEffect(() => {
+    uvLayoutImageRef.current = uvLayoutImage;
+    if (uvLayoutImage) {
+      renderUVCanvas();
+    }
+  }, [uvLayoutImage, renderUVCanvas]);
 
   // Единая функция обновления canvas и текстуры
   const updateCanvas = useCallback((force = false) => {

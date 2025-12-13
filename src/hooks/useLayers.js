@@ -42,7 +42,10 @@ function deserializeLayer(serialized) {
     canvas.height = CANVAS_SIZE;
     const ctx = canvas.getContext('2d', { willReadFrequently: false });
     const img = new Image();
-    img.onload = () => { ctx.drawImage(img, 0, 0); resolve({ ...serialized, canvas, ctx, dataUrl: undefined }); };
+    img.onload = () => { 
+      ctx.drawImage(img, 0, 0); 
+      resolve({ ...serialized, canvas, ctx, dataUrl: undefined }); 
+    };
     img.onerror = () => resolve({ ...serialized, canvas, ctx, dataUrl: undefined });
     img.src = serialized.dataUrl;
   });
@@ -62,6 +65,7 @@ export function useLayers(onCanvasUpdate) {
   const activeLayerIdRef = useRef(activeLayerId);
   const layerCounterRef = useRef(layerCounter);
 
+  // Синхронизация refs со state
   useEffect(() => { layersRef.current = layers; }, [layers]);
   useEffect(() => { activeLayerIdRef.current = activeLayerId; }, [activeLayerId]);
   useEffect(() => { layerCounterRef.current = layerCounter; }, [layerCounter]);
@@ -75,100 +79,189 @@ export function useLayers(onCanvasUpdate) {
 
   const saveToHistory = useCallback(async () => {
     if (isRestoringRef.current) return;
-    const serializedLayers = await Promise.all(layersRef.current.map(l => serializeLayer(l)));
-    const snapshot = { layers: serializedLayers, activeLayerId: activeLayerIdRef.current, layerCounter: { ...layerCounterRef.current } };
+    
+    // Используем актуальные данные из refs
+    const currentLayers = layersRef.current;
+    
+    if (!currentLayers || currentLayers.length === 0) {
+      console.warn('saveToHistory: no layers to save');
+      return;
+    }
+    
+    const serializedLayers = await Promise.all(currentLayers.map(l => serializeLayer(l)));
+    const snapshot = { 
+      layers: serializedLayers, 
+      activeLayerId: activeLayerIdRef.current, 
+      layerCounter: { ...layerCounterRef.current } 
+    };
+    
     const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
     newHistory.push(snapshot);
-    if (newHistory.length > 30) newHistory.shift();
-    else historyIndexRef.current = newHistory.length - 1;
+    
+    if (newHistory.length > 30) {
+      newHistory.shift();
+    } else {
+      historyIndexRef.current = newHistory.length - 1;
+    }
+    
     historyRef.current = newHistory;
     updateHistoryState();
   }, [updateHistoryState]);
 
   const restoreFromHistory = useCallback(async (index) => {
     if (index < 0 || index >= historyRef.current.length || isRestoringRef.current) return;
+    
     isRestoringRef.current = true;
     const snapshot = historyRef.current[index];
     const restoredLayers = await Promise.all(snapshot.layers.map(s => deserializeLayer(s)));
+    
+    // Обновляем refs синхронно
+    layersRef.current = restoredLayers;
+    activeLayerIdRef.current = snapshot.activeLayerId;
+    layerCounterRef.current = snapshot.layerCounter;
+    
+    // Обновляем state
     setLayers(restoredLayers);
     setActiveLayerId(snapshot.activeLayerId);
     setLayerCounter(snapshot.layerCounter);
-    setTimeout(() => { onCanvasUpdate?.(true); isRestoringRef.current = false; }, 0);
+    
+    setTimeout(() => { 
+      onCanvasUpdate?.(true); 
+      isRestoringRef.current = false; 
+    }, 0);
   }, [onCanvasUpdate]);
 
+  // Инициализация
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
+    
     const baseLayer = createLayer(LAYER_TYPES.BASE, 'Фон', { color: '#ffffff' });
+    
+    // Обновляем ref синхронно
+    layersRef.current = [baseLayer];
+    activeLayerIdRef.current = baseLayer.id;
+    
     setLayers([baseLayer]);
     setActiveLayerId(baseLayer.id);
+    
     setTimeout(async () => {
       const serialized = serializeLayer(baseLayer);
-      historyRef.current = [{ layers: [serialized], activeLayerId: baseLayer.id, layerCounter: { drawing: 0, image: 0 } }];
+      historyRef.current = [{ 
+        layers: [serialized], 
+        activeLayerId: baseLayer.id, 
+        layerCounter: { drawing: 0, image: 0 } 
+      }];
       historyIndexRef.current = 0;
       updateHistoryState();
     }, 0);
   }, [updateHistoryState]);
 
-  const getActiveLayer = useCallback(() => layersRef.current.find(l => l.id === activeLayerIdRef.current), []);
+  const getActiveLayer = useCallback(() => {
+    return layersRef.current.find(l => l.id === activeLayerIdRef.current);
+  }, []);
 
   const addDrawingLayer = useCallback(() => {
     const n = layerCounterRef.current.drawing + 1;
     const layer = createLayer(LAYER_TYPES.DRAWING, `Рисунок ${n}`);
-    setLayers(prev => [...prev, layer]);
+    
+    // Обновляем refs синхронно ПЕРЕД вызовом setLayers
+    const newLayers = [...layersRef.current, layer];
+    layersRef.current = newLayers;
+    activeLayerIdRef.current = layer.id;
+    layerCounterRef.current = { ...layerCounterRef.current, drawing: n };
+    
+    setLayers(newLayers);
     setActiveLayerId(layer.id);
     setLayerCounter(prev => ({ ...prev, drawing: n }));
+    
     return layer;
   }, []);
 
   const addImageLayer = useCallback((image, transform = null) => {
     const n = layerCounterRef.current.image + 1;
-    const layer = createLayer(LAYER_TYPES.IMAGE, `Изображение ${n}`, { sourceImage: image, transform: transform || { x: 0, y: 0, scale: 1, rotation: 0 } });
-    setLayers(prev => [...prev, layer]);
+    const layer = createLayer(LAYER_TYPES.IMAGE, `Изображение ${n}`, { 
+      sourceImage: image, 
+      transform: transform || { x: 0, y: 0, scale: 1, rotation: 0 } 
+    });
+    
+    // Обновляем refs синхронно ПЕРЕД вызовом setLayers
+    const newLayers = [...layersRef.current, layer];
+    layersRef.current = newLayers;
+    activeLayerIdRef.current = layer.id;
+    layerCounterRef.current = { ...layerCounterRef.current, image: n };
+    
+    setLayers(newLayers);
     setActiveLayerId(layer.id);
     setLayerCounter(prev => ({ ...prev, image: n }));
+    
     return layer;
   }, []);
 
   const toggleLayerVisibility = useCallback((id) => {
-    setLayers(prev => prev.map(l => l.id === id ? { ...l, visible: !l.visible } : l));
+    const newLayers = layersRef.current.map(l => 
+      l.id === id ? { ...l, visible: !l.visible } : l
+    );
+    layersRef.current = newLayers;
+    setLayers(newLayers);
     onCanvasUpdate?.(true);
   }, [onCanvasUpdate]);
 
   const moveLayerUp = useCallback((id) => {
-    setLayers(prev => {
-      const i = prev.findIndex(l => l.id === id);
-      if (i < 0 || i >= prev.length - 1) return prev;
-      const arr = [...prev]; [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]]; return arr;
-    });
+    const i = layersRef.current.findIndex(l => l.id === id);
+    if (i < 0 || i >= layersRef.current.length - 1) return;
+    
+    const arr = [...layersRef.current];
+    [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+    
+    layersRef.current = arr;
+    setLayers(arr);
     onCanvasUpdate?.(true);
   }, [onCanvasUpdate]);
 
   const moveLayerDown = useCallback((id) => {
-    setLayers(prev => {
-      const i = prev.findIndex(l => l.id === id);
-      if (i <= 1) return prev;
-      const arr = [...prev]; [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]]; return arr;
-    });
+    const i = layersRef.current.findIndex(l => l.id === id);
+    if (i <= 1) return;
+    
+    const arr = [...layersRef.current];
+    [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
+    
+    layersRef.current = arr;
+    setLayers(arr);
     onCanvasUpdate?.(true);
   }, [onCanvasUpdate]);
 
   const deleteLayer = useCallback((id) => {
-    setLayers(prev => {
-      const layer = prev.find(l => l.id === id);
-      if (!layer || layer.locked) return prev;
-      const arr = prev.filter(l => l.id !== id);
-      if (activeLayerIdRef.current === id && arr.length > 0) setActiveLayerId(arr[arr.length - 1].id);
-      return arr;
-    });
-    setTimeout(() => { saveToHistory(); onCanvasUpdate?.(true); }, 0);
+    const layer = layersRef.current.find(l => l.id === id);
+    if (!layer || layer.locked) return;
+    
+    const arr = layersRef.current.filter(l => l.id !== id);
+    
+    if (activeLayerIdRef.current === id && arr.length > 0) {
+      activeLayerIdRef.current = arr[arr.length - 1].id;
+      setActiveLayerId(arr[arr.length - 1].id);
+    }
+    
+    layersRef.current = arr;
+    setLayers(arr);
+    
+    setTimeout(() => { 
+      saveToHistory(); 
+      onCanvasUpdate?.(true); 
+    }, 0);
   }, [saveToHistory, onCanvasUpdate]);
 
   const clearActiveLayer = useCallback(() => {
     const layer = getActiveLayer();
     if (!layer) return;
+    
     layer.ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    if (layer.type === LAYER_TYPES.BASE) { layer.ctx.fillStyle = '#ffffff'; layer.ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE); }
+    if (layer.type === LAYER_TYPES.BASE) { 
+      layer.ctx.fillStyle = '#ffffff'; 
+      layer.ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE); 
+    }
+    
+    // Триггерим обновление state через копирование массива
     setLayers(prev => [...prev]);
     saveToHistory();
     onCanvasUpdate?.(true);
@@ -176,10 +269,19 @@ export function useLayers(onCanvasUpdate) {
 
   const clearAllLayers = useCallback(() => {
     const baseLayer = createLayer(LAYER_TYPES.BASE, 'Фон', { color: '#ffffff' });
+    
+    layersRef.current = [baseLayer];
+    activeLayerIdRef.current = baseLayer.id;
+    layerCounterRef.current = { drawing: 0, image: 0 };
+    
     setLayers([baseLayer]);
     setActiveLayerId(baseLayer.id);
     setLayerCounter({ drawing: 0, image: 0 });
-    setTimeout(() => { saveToHistory(); onCanvasUpdate?.(true); }, 0);
+    
+    setTimeout(() => { 
+      saveToHistory(); 
+      onCanvasUpdate?.(true); 
+    }, 0);
   }, [saveToHistory, onCanvasUpdate]);
 
   const undo = useCallback(() => {
