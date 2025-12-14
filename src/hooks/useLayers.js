@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { CANVAS_SIZE } from '../utils/constants';
+import { CANVAS_SIZE, MAX_HISTORY } from '../utils/constants';
 
 export const LAYER_TYPES = {
   BASE: 'base',
@@ -11,7 +11,10 @@ function createLayer(type, name, options = {}) {
   const canvas = document.createElement('canvas');
   canvas.width = CANVAS_SIZE;
   canvas.height = CANVAS_SIZE;
-  const ctx = canvas.getContext('2d', { willReadFrequently: false });
+  const ctx = canvas.getContext('2d', { 
+    willReadFrequently: false,
+    alpha: true 
+  });
   
   if (type === LAYER_TYPES.BASE) {
     ctx.fillStyle = options.color || '#ffffff';
@@ -28,10 +31,12 @@ function createLayer(type, name, options = {}) {
 }
 
 function serializeLayer(layer) {
+  // Используем меньшее качество на мобильных для экономии памяти
+  const quality = CANVAS_SIZE <= 512 ? 0.6 : 0.8;
   return {
     id: layer.id, type: layer.type, name: layer.name,
     visible: layer.visible, locked: layer.locked, opacity: layer.opacity,
-    dataUrl: layer.canvas.toDataURL('image/png', 0.8)
+    dataUrl: layer.canvas.toDataURL('image/png', quality)
   };
 }
 
@@ -40,10 +45,13 @@ function deserializeLayer(serialized) {
     const canvas = document.createElement('canvas');
     canvas.width = CANVAS_SIZE;
     canvas.height = CANVAS_SIZE;
-    const ctx = canvas.getContext('2d', { willReadFrequently: false });
+    const ctx = canvas.getContext('2d', { 
+      willReadFrequently: false,
+      alpha: true 
+    });
     const img = new Image();
     img.onload = () => { 
-      ctx.drawImage(img, 0, 0); 
+      ctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE); 
       resolve({ ...serialized, canvas, ctx, dataUrl: undefined }); 
     };
     img.onerror = () => resolve({ ...serialized, canvas, ctx, dataUrl: undefined });
@@ -65,7 +73,6 @@ export function useLayers(onCanvasUpdate) {
   const activeLayerIdRef = useRef(activeLayerId);
   const layerCounterRef = useRef(layerCounter);
 
-  // Синхронизация refs со state
   useEffect(() => { layersRef.current = layers; }, [layers]);
   useEffect(() => { activeLayerIdRef.current = activeLayerId; }, [activeLayerId]);
   useEffect(() => { layerCounterRef.current = layerCounter; }, [layerCounter]);
@@ -80,7 +87,6 @@ export function useLayers(onCanvasUpdate) {
   const saveToHistory = useCallback(async () => {
     if (isRestoringRef.current) return;
     
-    // Используем актуальные данные из refs
     const currentLayers = layersRef.current;
     
     if (!currentLayers || currentLayers.length === 0) {
@@ -98,7 +104,8 @@ export function useLayers(onCanvasUpdate) {
     const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
     newHistory.push(snapshot);
     
-    if (newHistory.length > 30) {
+    // Используем MAX_HISTORY из констант
+    if (newHistory.length > MAX_HISTORY) {
       newHistory.shift();
     } else {
       historyIndexRef.current = newHistory.length - 1;
@@ -115,12 +122,10 @@ export function useLayers(onCanvasUpdate) {
     const snapshot = historyRef.current[index];
     const restoredLayers = await Promise.all(snapshot.layers.map(s => deserializeLayer(s)));
     
-    // Обновляем refs синхронно
     layersRef.current = restoredLayers;
     activeLayerIdRef.current = snapshot.activeLayerId;
     layerCounterRef.current = snapshot.layerCounter;
     
-    // Обновляем state
     setLayers(restoredLayers);
     setActiveLayerId(snapshot.activeLayerId);
     setLayerCounter(snapshot.layerCounter);
@@ -131,14 +136,12 @@ export function useLayers(onCanvasUpdate) {
     }, 0);
   }, [onCanvasUpdate]);
 
-  // Инициализация
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
     
     const baseLayer = createLayer(LAYER_TYPES.BASE, 'Фон', { color: '#ffffff' });
     
-    // Обновляем ref синхронно
     layersRef.current = [baseLayer];
     activeLayerIdRef.current = baseLayer.id;
     
@@ -165,7 +168,6 @@ export function useLayers(onCanvasUpdate) {
     const n = layerCounterRef.current.drawing + 1;
     const layer = createLayer(LAYER_TYPES.DRAWING, `Рисунок ${n}`);
     
-    // Обновляем refs синхронно ПЕРЕД вызовом setLayers
     const newLayers = [...layersRef.current, layer];
     layersRef.current = newLayers;
     activeLayerIdRef.current = layer.id;
@@ -185,7 +187,6 @@ export function useLayers(onCanvasUpdate) {
       transform: transform || { x: 0, y: 0, scale: 1, rotation: 0 } 
     });
     
-    // Обновляем refs синхронно ПЕРЕД вызовом setLayers
     const newLayers = [...layersRef.current, layer];
     layersRef.current = newLayers;
     activeLayerIdRef.current = layer.id;
@@ -261,7 +262,6 @@ export function useLayers(onCanvasUpdate) {
       layer.ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE); 
     }
     
-    // Триггерим обновление state через копирование массива
     setLayers(prev => [...prev]);
     saveToHistory();
     onCanvasUpdate?.(true);

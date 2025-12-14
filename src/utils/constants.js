@@ -1,5 +1,13 @@
-// Константы приложения
-export const CANVAS_SIZE = 1024; // Уменьшено с 2048 для производительности
+// Определение мобильного устройства для констант
+const isMobile = typeof window !== 'undefined' && (
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+  (window.innerWidth <= 1024 && 'ontouchstart' in window)
+);
+
+// Размер canvas - уменьшаем на мобильных для производительности
+// 1024 на десктопе, 512 на мобильных
+export const CANVAS_SIZE = isMobile ? 512 : 1024;
+
 export const MODEL_PATH = '/materials/model.glb';
 export const UV_LAYOUT_PATH = '/materials/uv-layout.png';
 
@@ -8,7 +16,7 @@ export const COLOR_PRESETS = [
   '#FFFF00', '#FF00FF', '#00FFFF', '#FF6B35', '#004E89'
 ];
 
-export const MAX_HISTORY = 20; // Уменьшено для экономии памяти
+export const MAX_HISTORY = isMobile ? 10 : 20; // Меньше истории на мобильных
 
 export const TOOLS = {
   DRAW: 'draw',
@@ -16,12 +24,12 @@ export const TOOLS = {
   IMAGE: 'image'
 };
 
-// Настройки производительности
+// Настройки производительности с учётом мобильных
 export const PERFORMANCE = {
-  POINTER_THROTTLE_MS: 16, // ~60fps для событий pointer
-  TEXTURE_UPDATE_MS: 50, // Обновление 3D текстуры
-  MIN_DRAW_DISTANCE: 3, // Минимальное расстояние между точками
-  TRANSFORM_THROTTLE_MS: 32 // ~30fps для трансформации изображения
+  POINTER_THROTTLE_MS: isMobile ? 32 : 16, // ~30fps на мобильных, ~60fps на десктопе
+  TEXTURE_UPDATE_MS: isMobile ? 100 : 50, // Реже обновляем текстуру на мобильных
+  MIN_DRAW_DISTANCE: isMobile ? 5 : 3, // Больше расстояние между точками на мобильных
+  TRANSFORM_THROTTLE_MS: isMobile ? 50 : 32
 };
 
 // Реэкспорт типов слоёв для удобства

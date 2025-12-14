@@ -1,7 +1,17 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { CANVAS_SIZE, MODEL_PATH, UV_LAYOUT_PATH, TOOLS, PERFORMANCE } from '../utils/constants';
-import { createGradientBackground, setupCamera, setupRenderer, setupControls, setupLights, setupGround, disposeScene } from '../utils/sceneSetup';
+import { 
+  createGradientBackground, 
+  setupCamera, 
+  setupRenderer, 
+  setupControls, 
+  setupLights, 
+  setupGround, 
+  disposeScene,
+  isMobileDevice,
+  setupContextHandlers
+} from '../utils/sceneSetup';
 import { loadModel, positionCamera } from '../utils/modelLoader';
 import { getCanvasCoords } from '../utils/drawingUtils';
 import { useLayers } from '../hooks/useLayers';
@@ -27,18 +37,13 @@ function useUVLayout(onLoad) {
   const [uvLayoutImage, setUvLayoutImage] = useState(null);
   const onLoadRef = useRef(onLoad);
   
-  useEffect(() => {
-    onLoadRef.current = onLoad;
-  }, [onLoad]);
+  useEffect(() => { onLoadRef.current = onLoad; }, [onLoad]);
   
   useEffect(() => {
     const img = new Image();
     img.onload = () => {
       setUvLayoutImage(img);
-      // Вызываем callback после загрузки
-      if (onLoadRef.current) {
-        onLoadRef.current();
-      }
+      if (onLoadRef.current) onLoadRef.current();
     };
     img.onerror = () => console.error('Не удалось загрузить UV разметку');
     img.src = UV_LAYOUT_PATH;
@@ -46,6 +51,9 @@ function useUVLayout(onLoad) {
   
   return uvLayoutImage;
 }
+
+// Глобальный флаг для предотвращения двойной инициализации в StrictMode
+let globalSceneInitialized = false;
 
 function GarmentDesignerWithLayers() {
   const containerRef = useRef(null);
@@ -59,6 +67,7 @@ function GarmentDesignerWithLayers() {
   const modelGroupRef = useRef(null);
   const animationFrameRef = useRef(null);
   const modelLoadedRef = useRef(false);
+  const mountedRef = useRef(false);
   
   const [tool, setTool] = useState(TOOLS.DRAW);
   const [brushSize, setBrushSize] = useState(15);
@@ -67,8 +76,7 @@ function GarmentDesignerWithLayers() {
   const [wireframe, setWireframe] = useState(false);
   const [showTools, setShowTools] = useState(true);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
-  
-  // Счётчик для принудительного ре-рендера
+  const [webglError, setWebglError] = useState(null);
   const [updateTrigger, setUpdateTrigger] = useState(0);
   
   const lastPointerTimeRef = useRef(0);
@@ -78,8 +86,8 @@ function GarmentDesignerWithLayers() {
   const uvLayoutImageRef = useRef(null);
   
   const isMobile = useIsMobile();
+  const isMobileDeviceRef = useRef(isMobileDevice());
 
-  // Функция рендеринга UV canvas - объявляем до использования
   const renderUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
     
@@ -88,11 +96,9 @@ function GarmentDesignerWithLayers() {
     }
     const ctx = uvCtxRef.current;
     
-    // Очищаем белым
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
-    // Рисуем слои
     const currentLayers = layersRef.current;
     if (currentLayers && currentLayers.length > 0) {
       currentLayers.forEach(layer => {
@@ -104,7 +110,6 @@ function GarmentDesignerWithLayers() {
       ctx.globalAlpha = 1;
     }
     
-    // Рисуем pending изображение (в режиме трансформации)
     const pendingImg = pendingImageRef.current;
     const imgTransform = imageTransformRef.current;
     if (pendingImg && imgTransform) {
@@ -119,7 +124,6 @@ function GarmentDesignerWithLayers() {
       ctx.restore();
     }
     
-    // UV разметка поверх - используем ref для актуального значения
     const uvLayoutImage = uvLayoutImageRef.current;
     if (uvLayoutImage) {
       ctx.globalAlpha = 0.2;
@@ -127,114 +131,76 @@ function GarmentDesignerWithLayers() {
       ctx.globalAlpha = 1.0;
     }
     
-    // Обновляем текстуру 3D модели
     if (textureRef.current) {
       textureRef.current.needsUpdate = true;
     }
   }, []);
 
-  // Callback для загрузки UV layout
   const handleUVLayoutLoaded = useCallback(() => {
-    // Перерисовываем canvas после загрузки UV layout
     renderUVCanvas();
   }, [renderUVCanvas]);
 
-  // Загружаем UV layout с callback
   const uvLayoutImage = useUVLayout(handleUVLayoutLoaded);
   
-  // Синхронизируем uvLayoutImage с ref
   useEffect(() => {
     uvLayoutImageRef.current = uvLayoutImage;
-    if (uvLayoutImage) {
-      renderUVCanvas();
-    }
+    if (uvLayoutImage) renderUVCanvas();
   }, [uvLayoutImage, renderUVCanvas]);
 
-  // Единая функция обновления canvas и текстуры
   const updateCanvas = useCallback((force = false) => {
     renderUVCanvas();
-    // Дополнительно триггерим обновление текстуры
-    if (textureRef.current) {
-      textureRef.current.needsUpdate = true;
-    }
-    if (force) {
-      setUpdateTrigger(prev => prev + 1);
-    }
+    if (textureRef.current) textureRef.current.needsUpdate = true;
+    if (force) setUpdateTrigger(prev => prev + 1);
   }, [renderUVCanvas]);
 
-  // Хук слоёв - передаём updateCanvas как callback
   const {
-    layers,
-    activeLayerId,
-    setActiveLayerId,
-    getActiveLayer,
-    addDrawingLayer,
-    addImageLayer,
-    toggleLayerVisibility,
-    moveLayerUp,
-    moveLayerDown,
-    deleteLayer,
-    clearActiveLayer,
-    clearAllLayers,
-    saveToHistory,
-    undo,
-    redo,
-    canUndo,
-    canRedo
+    layers, activeLayerId, setActiveLayerId, getActiveLayer,
+    addDrawingLayer, addImageLayer, toggleLayerVisibility,
+    moveLayerUp, moveLayerDown, deleteLayer,
+    clearActiveLayer, clearAllLayers, saveToHistory,
+    undo, redo, canUndo, canRedo
   } = useLayers(updateCanvas);
 
-  // Синхронизируем layers с ref
   useEffect(() => {
     layersRef.current = layers;
     renderUVCanvas();
   }, [layers, renderUVCanvas]);
 
-  // Хук рисования
   const { isDrawing, startDrawing, stopDrawing, drawOnCanvas } = useDrawingWithLayers(
-    uvLayoutImage,
-    getActiveLayer,
-    addDrawingLayer,
-    saveToHistory,
-    updateCanvas
+    uvLayoutImage, getActiveLayer, addDrawingLayer, saveToHistory, updateCanvas
   );
 
-  // Хук трансформации изображения
   const {
-    pendingImage,
-    imageTransform,
-    setImageTransform,
-    isTransformMode,
-    handleImageUpload,
-    setDesignImageDirect,
-    startDrag,
-    drag,
-    stopDrag,
-    applyImage,
-    cancelTransform
-  } = useImageTransformWithLayers(
-    uvLayoutImage,
-    addImageLayer,
-    saveToHistory,
-    updateCanvas
-  );
+    pendingImage, imageTransform, setImageTransform, isTransformMode,
+    handleImageUpload, setDesignImageDirect, startDrag, drag, stopDrag,
+    applyImage, cancelTransform
+  } = useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveToHistory, updateCanvas);
 
-  // Синхронизируем pendingImage и imageTransform с refs
   useEffect(() => {
     pendingImageRef.current = pendingImage;
     imageTransformRef.current = imageTransform;
     renderUVCanvas();
   }, [pendingImage, imageTransform, renderUVCanvas]);
 
-  // Callback для AI генерации
   const handleAIImageGenerated = useCallback((img) => {
     setDesignImageDirect(img);
   }, [setDesignImageDirect]);
 
-  // Инициализация Three.js сцены
+  // Инициализация Three.js с защитой от двойной инициализации
   useEffect(() => {
-    if (!containerRef.current || rendererRef.current) return;
+    // Защита от двойной инициализации в StrictMode
+    if (!containerRef.current || globalSceneInitialized || rendererRef.current) {
+      return;
+    }
+    
+    mountedRef.current = true;
+    globalSceneInitialized = true;
     
     const container = containerRef.current;
+    const isMobileFlag = isMobileDeviceRef.current;
+    
+    console.log(`[GarmentDesigner] Initializing 3D scene, mobile: ${isMobileFlag}`);
+    
     const scene = new THREE.Scene();
     scene.background = createGradientBackground();
     sceneRef.current = scene;
@@ -243,72 +209,143 @@ function GarmentDesignerWithLayers() {
     cameraRef.current = camera;
     
     const renderer = setupRenderer(container);
+    
+    if (!renderer) {
+      setWebglError('WebGL не поддерживается на вашем устройстве');
+      globalSceneInitialized = false;
+      return;
+    }
+    
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+    
+    setupContextHandlers(
+      renderer,
+      () => {
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+        console.warn('[GarmentDesigner] WebGL context lost');
+        setWebglError('WebGL контекст потерян. Перезагрузите страницу.');
+      },
+      () => {
+        console.log('[GarmentDesigner] WebGL context restored');
+        setWebglError(null);
+        if (mountedRef.current) animate();
+      }
+    );
     
     const controls = setupControls(camera, renderer.domElement);
     controlsRef.current = controls;
     
-    setupLights(scene);
-    setupGround(scene);
+    setupLights(scene, isMobileFlag);
+    setupGround(scene, isMobileFlag);
     
-    // Анимационный цикл - рендерим каждый кадр
     const animate = () => {
+      if (!mountedRef.current) return;
+      
       animationFrameRef.current = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
+      
+      try {
+        const gl = renderer.getContext();
+        if (gl && gl.isContextLost()) return;
+        
+        controls.update();
+        renderer.render(scene, camera);
+      } catch (e) {
+        console.error('[GarmentDesigner] Render error:', e);
+      }
     };
     animate();
     
     const handleResize = () => {
-      if (!container) return;
-      camera.aspect = container.clientWidth / container.clientHeight;
+      if (!container || !renderer || !mountedRef.current) return;
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setSize(width, height);
     };
+    
     window.addEventListener('resize', handleResize);
+    setTimeout(handleResize, 100);
     
     return () => {
+      mountedRef.current = false;
+      globalSceneInitialized = false;
+      
       window.removeEventListener('resize', handleResize);
-      cancelAnimationFrame(animationFrameRef.current);
-      disposeScene(scene, renderer);
-      if (container?.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
+      
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
+      
+      if (sceneRef.current && rendererRef.current) {
+        disposeScene(sceneRef.current, rendererRef.current);
+      }
+      
+      if (container && rendererRef.current?.domElement) {
+        try {
+          container.removeChild(rendererRef.current.domElement);
+        } catch (e) {}
+      }
+      
       rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+      controlsRef.current = null;
     };
   }, []);
 
-  // Загрузка 3D модели
+  // Загрузка модели
   useEffect(() => {
-    if (!sceneRef.current || modelLoadedRef.current || !uvCanvasRef.current) return;
+    if (!sceneRef.current || !rendererRef.current || !uvCanvasRef.current || modelLoadedRef.current) {
+      return;
+    }
     
     modelLoadedRef.current = true;
     setLoading(true);
+    
+    const isMobileFlag = isMobileDeviceRef.current;
     
     loadModel(
       MODEL_PATH,
       uvCanvasRef.current,
       (loadedModel, texture) => {
+        if (!mountedRef.current || !sceneRef.current) return;
+        
         modelGroupRef.current = loadedModel;
         textureRef.current = texture;
+        
+        if (isMobileFlag) {
+          loadedModel.traverse((child) => {
+            if (child.isMesh) {
+              child.castShadow = false;
+              child.receiveShadow = false;
+            }
+          });
+        }
+        
         sceneRef.current.add(loadedModel);
         positionCamera(cameraRef.current, controlsRef.current);
         setLoading(false);
-        
-        // Первоначальное обновление
         renderUVCanvas();
+        console.log('[GarmentDesigner] Model loaded successfully');
       },
-      () => {
+      (error) => {
+        console.error('[GarmentDesigner] Model load error:', error);
         modelLoadedRef.current = false;
         setLoading(false);
+        setWebglError('Не удалось загрузить 3D модель');
       }
     );
   }, [renderUVCanvas]);
 
-  // Обработчики pointer событий
+  // Touch/Mouse обработчики БЕЗ preventDefault для passive событий
   const handlePointerDown = useCallback((e) => {
-    e.preventDefault();
+    // Не вызываем preventDefault для touch событий (они passive по умолчанию)
     const coords = getCanvasCoords(e, uvCanvasRef.current);
     
     if (isTransformMode && pendingImage) {
@@ -321,7 +358,6 @@ function GarmentDesignerWithLayers() {
   }, [isTransformMode, pendingImage, tool, brushColor, brushSize, startDrag, startDrawing, drawOnCanvas]);
 
   const handlePointerMove = useCallback((e) => {
-    e.preventDefault();
     const now = Date.now();
     if (now - lastPointerTimeRef.current < PERFORMANCE.POINTER_THROTTLE_MS) return;
     lastPointerTimeRef.current = now;
@@ -341,7 +377,6 @@ function GarmentDesignerWithLayers() {
     stopDrag();
   }, [stopDrawing, stopDrag]);
 
-  // Экспорт текстуры
   const downloadTexture = useCallback(() => {
     if (!uvCanvasRef.current) return;
     const link = document.createElement('a');
@@ -350,48 +385,26 @@ function GarmentDesignerWithLayers() {
     link.click();
   }, []);
 
-  // Переключение wireframe
   const toggleWireframe = useCallback(() => {
     if (!modelGroupRef.current) return;
     const nw = !wireframe;
     setWireframe(nw);
     modelGroupRef.current.traverse((c) => {
-      if (c.isMesh && c.material) {
-        c.material.wireframe = nw;
-      }
+      if (c.isMesh && c.material) c.material.wireframe = nw;
     });
   }, [wireframe]);
 
-  // Props для тулбара
   const toolbarProps = useMemo(() => ({
-    tool,
-    setTool,
-    brushSize,
-    setBrushSize,
-    brushColor,
-    setBrushColor,
-    onImageUpload: handleImageUpload,
-    onAIGenerate: () => setIsAIModalOpen(true),
-    onUndo: undo,
-    onRedo: redo,
-    canUndo,
-    canRedo,
-    isTransformMode,
-    imageTransform,
-    setImageTransform,
-    onApplyImage: applyImage,
-    onCancelImage: cancelTransform,
-    isMobile,
-    layers,
-    activeLayerId,
-    onSelectLayer: setActiveLayerId,
+    tool, setTool, brushSize, setBrushSize, brushColor, setBrushColor,
+    onImageUpload: handleImageUpload, onAIGenerate: () => setIsAIModalOpen(true),
+    onUndo: undo, onRedo: redo, canUndo, canRedo,
+    isTransformMode, imageTransform, setImageTransform,
+    onApplyImage: applyImage, onCancelImage: cancelTransform, isMobile,
+    layers, activeLayerId, onSelectLayer: setActiveLayerId,
     onToggleLayerVisibility: toggleLayerVisibility,
-    onMoveLayerUp: moveLayerUp,
-    onMoveLayerDown: moveLayerDown,
-    onDeleteLayer: deleteLayer,
-    onAddDrawingLayer: addDrawingLayer,
-    onClearLayer: clearActiveLayer,
-    onClearAll: clearAllLayers
+    onMoveLayerUp: moveLayerUp, onMoveLayerDown: moveLayerDown,
+    onDeleteLayer: deleteLayer, onAddDrawingLayer: addDrawingLayer,
+    onClearLayer: clearActiveLayer, onClearAll: clearAllLayers
   }), [
     tool, brushSize, brushColor, handleImageUpload, undo, redo, canUndo, canRedo,
     isTransformMode, imageTransform, setImageTransform, applyImage, cancelTransform, isMobile,
@@ -451,7 +464,28 @@ function GarmentDesignerWithLayers() {
             )}
           </div>
         </div>
-        <div ref={containerRef} className="flex-1 relative touch-none" />
+        
+        <div ref={containerRef} className="flex-1 relative" style={{ touchAction: 'none' }}>
+          {webglError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 z-10">
+              <div className="bg-white rounded-xl p-6 m-4 max-w-sm text-center">
+                <div className="w-12 h-12 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+                  <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Ошибка 3D</h3>
+                <p className="text-sm text-gray-600 mb-4">{webglError}</p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium"
+                >
+                  Перезагрузить
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </main>
       
       <aside className={`${
@@ -471,9 +505,10 @@ function GarmentDesignerWithLayers() {
             ref={uvCanvasRef} 
             width={CANVAS_SIZE} 
             height={CANVAS_SIZE} 
-            className={`w-full border-2 border-gray-200 rounded-2xl bg-white shadow-lg touch-none ${
+            className={`w-full border-2 border-gray-200 rounded-2xl bg-white shadow-lg ${
               isTransformMode ? 'cursor-move' : 'cursor-crosshair'
             }`}
+            style={{ touchAction: 'none' }}
             onMouseDown={handlePointerDown}
             onMouseMove={handlePointerMove}
             onMouseUp={handlePointerUp}
