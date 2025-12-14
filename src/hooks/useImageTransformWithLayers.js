@@ -1,6 +1,108 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { CANVAS_SIZE } from '../utils/constants';
 
+// Лимиты для загружаемых изображений
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_IMAGE_DIMENSION = 2048;
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+/**
+ * Валидация файла
+ */
+function validateImageFile(file) {
+  if (!file) {
+    return { valid: false, error: 'Файл не выбран' };
+  }
+  
+  if (!ALLOWED_TYPES.includes(file.type)) {
+    return { 
+      valid: false, 
+      error: 'Недопустимый формат. Разрешены: JPEG, PNG, WebP, GIF' 
+    };
+  }
+  
+  if (file.size > MAX_FILE_SIZE) {
+    return { 
+      valid: false, 
+      error: `Файл слишком большой. Максимум ${MAX_FILE_SIZE / 1024 / 1024}MB` 
+    };
+  }
+  
+  return { valid: true };
+}
+
+/**
+ * Ресайз изображения на клиенте
+ */
+function resizeImage(img, maxDim = MAX_IMAGE_DIMENSION) {
+  let { naturalWidth: width, naturalHeight: height } = img;
+  
+  // Если изображение уже подходит по размеру
+  if (width <= maxDim && height <= maxDim) {
+    return img;
+  }
+  
+  // Вычисляем новые размеры
+  const scale = Math.min(maxDim / width, maxDim / height);
+  const newWidth = Math.round(width * scale);
+  const newHeight = Math.round(height * scale);
+  
+  // Создаём canvas для ресайза
+  const canvas = document.createElement('canvas');
+  canvas.width = newWidth;
+  canvas.height = newHeight;
+  
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, newWidth, newHeight);
+  
+  // Создаём новое изображение
+  const resizedImg = new Image();
+  resizedImg.src = canvas.toDataURL('image/jpeg', 0.9);
+  resizedImg.width = newWidth;
+  resizedImg.height = newHeight;
+  
+  return resizedImg;
+}
+
+/**
+ * Загрузка изображения из файла с ресайзом
+ */
+function loadImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      reject(new Error(validation.error));
+      return;
+    }
+    
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      const img = new Image();
+      
+      img.onload = () => {
+        // Ресайзим если нужно
+        const processedImg = resizeImage(img);
+        resolve(processedImg);
+      };
+      
+      img.onerror = () => {
+        reject(new Error('Не удалось загрузить изображение. Файл повреждён?'));
+      };
+      
+      img.src = e.target.result;
+    };
+    
+    reader.onerror = () => {
+      reject(new Error('Ошибка чтения файла'));
+    };
+    
+    reader.readAsDataURL(file);
+  });
+}
+
 /**
  * Хук для работы с трансформацией изображения (для системы слоёв)
  */
@@ -13,6 +115,7 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     rotation: 0
   });
   const [isTransformMode, setIsTransformMode] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
   
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -35,32 +138,43 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     }
   }, []);
 
-  const handleImageUpload = useCallback((event) => {
+  const handleImageUpload = useCallback(async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        setPendingImage(img);
-        setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
-        setIsTransformMode(true);
-        requestAnimationFrame(() => triggerUpdate(true));
-      };
-      img.onerror = () => console.error('Ошибка загрузки изображения');
-      img.src = e.target.result;
-    };
-    reader.onerror = () => console.error('Ошибка чтения файла');
-    reader.readAsDataURL(file);
+    
+    // Сбрасываем предыдущую ошибку
+    setUploadError(null);
+    
+    try {
+      const img = await loadImageFromFile(file);
+      
+      setPendingImage(img);
+      setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+      setIsTransformMode(true);
+      requestAnimationFrame(() => triggerUpdate(true));
+      
+    } catch (err) {
+      console.error('Image upload error:', err);
+      setUploadError(err.message);
+      
+      // Автоматически скрываем ошибку через 5 секунд
+      setTimeout(() => setUploadError(null), 5000);
+    }
+    
+    // Очищаем input для повторной загрузки того же файла
     event.target.value = '';
   }, [triggerUpdate]);
 
   const setDesignImageDirect = useCallback((img) => {
     if (!img) return;
-    setPendingImage(img);
+    
+    // Ресайзим если нужно
+    const processedImg = resizeImage(img);
+    
+    setPendingImage(processedImg);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     setIsTransformMode(true);
+    setUploadError(null);
     requestAnimationFrame(() => triggerUpdate(true));
   }, [triggerUpdate]);
 
@@ -159,9 +273,6 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     
-    // ВАЖНО: Используем setTimeout чтобы дождаться обновления layers в useLayers
-    // перед сохранением в историю. Это гарантирует, что новый слой
-    // будет включён в snapshot истории.
     setTimeout(() => {
       if (saveToHistoryRef.current) {
         saveToHistoryRef.current();
@@ -174,6 +285,7 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     setPendingImage(null);
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+    setUploadError(null);
     triggerUpdate(true);
   }, [triggerUpdate]);
 
@@ -181,6 +293,11 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     setPendingImage(null);
     setIsTransformMode(false);
     setImageTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+    setUploadError(null);
+  }, []);
+
+  const clearUploadError = useCallback(() => {
+    setUploadError(null);
   }, []);
 
   return {
@@ -188,6 +305,7 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     imageTransform,
     setImageTransform,
     isTransformMode,
+    uploadError,
     handleImageUpload,
     setDesignImageDirect,
     startDrag,
@@ -195,6 +313,7 @@ export function useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveTo
     stopDrag,
     applyImage,
     cancelTransform,
-    resetImageState
+    resetImageState,
+    clearUploadError
   };
 }
