@@ -25,11 +25,26 @@ export const TOOLS = {
   IMAGE: 'image'
 };
 
-// Настройки края кисти/ластика
+// Настройки размера кисти
+export const BRUSH_SIZE = {
+  MIN: 1,
+  MAX: 150,
+  DEFAULT: 15
+};
+
+// Настройки жёсткости края кисти/ластика
+// Жёсткость определяет степень размытости краёв:
+// - 0%: максимально мягкий край (Gaussian falloff)
+// - 100%: полностью чёткий край (как в Paint)
 export const BRUSH_HARDNESS = {
-  MIN: 0,    // Полностью мягкий край
-  MAX: 100,  // Полностью жёсткий край
-  DEFAULT: 80
+  MIN: 0,      // Полностью мягкий край
+  MAX: 100,    // Полностью жёсткий край
+  DEFAULT: 80, // По умолчанию немного мягче
+  PRESETS: {
+    SOFT: 0,      // Мягкая кисть для плавных переходов
+    MEDIUM: 50,   // Средняя для общего использования
+    HARD: 100     // Жёсткая для точных линий
+  }
 };
 
 // Настройки производительности
@@ -37,7 +52,12 @@ export const PERFORMANCE = {
   POINTER_THROTTLE_MS: isMobile ? 32 : 16,
   TEXTURE_UPDATE_MS: isMobile ? 100 : 50,
   MIN_DRAW_DISTANCE: isMobile ? 5 : 3,
-  TRANSFORM_THROTTLE_MS: isMobile ? 50 : 32
+  TRANSFORM_THROTTLE_MS: isMobile ? 50 : 32,
+  // Плотность интерполяции для линий (меньше = более плавные линии)
+  BRUSH_INTERPOLATION_DENSITY: {
+    SOFT: 0.2,   // Для мягких кистей (hardness < 50)
+    HARD: 0.3    // Для жёстких кистей
+  }
 };
 
 export { LAYER_TYPES } from './layerTypes';

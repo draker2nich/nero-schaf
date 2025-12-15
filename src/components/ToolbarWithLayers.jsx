@@ -1,5 +1,6 @@
-import React, { memo, useCallback, useState, useRef } from 'react';
+import React, { memo, useCallback, useState, useRef, useMemo, useEffect } from 'react';
 import { TOOLS, COLOR_PRESETS, BRUSH_HARDNESS } from '../utils/constants';
+import { generateBrushPreview } from '../utils/drawingUtils';
 import LayersPanel from './LayersPanel';
 
 // Иконки
@@ -105,49 +106,195 @@ const FullColorPicker = memo(({ color, onChange }) => {
   );
 });
 
-// Слайдер размера
-const SizeSlider = memo(({ label, value, onChange, min = 5, max = 100 }) => (
-  <div>
-    <div className="flex justify-between items-center mb-2">
-      <label className="text-xs font-medium text-gray-700">{label}</label>
-      <span className="text-xs text-gray-500 tabular-nums">{value}px</span>
+// Компонент превью кисти
+const BrushPreview = memo(({ size, hardness, color, isEraser }) => {
+  const previewDataUrl = useMemo(() => {
+    return generateBrushPreview(64, hardness, isEraser ? '#666666' : color);
+  }, [hardness, color, isEraser]);
+  
+  return (
+    <div className="flex flex-col items-center gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200">
+      <span className="text-xs font-medium text-gray-600">Превью кисти</span>
+      <div 
+        className="relative rounded-lg overflow-hidden border border-gray-300"
+        style={{ width: 64, height: 64 }}
+      >
+        <img 
+          src={previewDataUrl} 
+          alt="Brush preview" 
+          className="w-full h-full"
+          style={{ imageRendering: 'auto' }}
+        />
+      </div>
+      <div className="flex gap-4 text-xs text-gray-500">
+        <span>Ø {size}px</span>
+        <span>Жёсткость {hardness}%</span>
+      </div>
     </div>
-    <input
-      type="range"
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
-      min={min}
-      max={max}
-    />
-  </div>
-));
+  );
+});
 
-// Слайдер жёсткости края
-const HardnessSlider = memo(({ value, onChange }) => (
-  <div>
-    <div className="flex justify-between items-center mb-2">
-      <label className="text-xs font-medium text-gray-700">Жёсткость края</label>
-      <span className="text-xs text-gray-500 tabular-nums">{value}%</span>
-    </div>
-    <div className="flex items-center gap-2">
-      <div className="w-6 h-6 rounded-full" style={{ background: 'radial-gradient(circle, #374151 0%, transparent 70%)' }} />
+// Слайдер размера с улучшенным UI
+const SizeSlider = memo(({ label, value, onChange, min = 5, max = 100 }) => {
+  const [inputValue, setInputValue] = useState(value.toString());
+  
+  useEffect(() => {
+    setInputValue(value.toString());
+  }, [value]);
+  
+  const handleInputChange = useCallback((e) => {
+    const newValue = e.target.value;
+    setInputValue(newValue);
+    
+    const numValue = parseInt(newValue, 10);
+    if (!isNaN(numValue) && numValue >= min && numValue <= max) {
+      onChange(numValue);
+    }
+  }, [onChange, min, max]);
+  
+  const handleInputBlur = useCallback(() => {
+    const numValue = parseInt(inputValue, 10);
+    if (isNaN(numValue) || numValue < min) {
+      setInputValue(min.toString());
+      onChange(min);
+    } else if (numValue > max) {
+      setInputValue(max.toString());
+      onChange(max);
+    }
+  }, [inputValue, onChange, min, max]);
+  
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-2">
+        <label className="text-xs font-medium text-gray-700">{label}</label>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={inputValue}
+            onChange={handleInputChange}
+            onBlur={handleInputBlur}
+            min={min}
+            max={max}
+            className="w-14 px-2 py-1 text-xs text-right bg-gray-100 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <span className="text-xs text-gray-500">px</span>
+        </div>
+      </div>
       <input
         type="range"
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
-        min={BRUSH_HARDNESS.MIN}
-        max={BRUSH_HARDNESS.MAX}
+        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+        min={min}
+        max={max}
       />
-      <div className="w-6 h-6 rounded-full bg-gray-800" />
+      <div className="flex justify-between text-xs text-gray-400 mt-1">
+        <span>{min}px</span>
+        <span>{max}px</span>
+      </div>
     </div>
-    <div className="flex justify-between text-xs text-gray-400 mt-1">
-      <span>Мягкий</span>
-      <span>Жёсткий</span>
+  );
+});
+
+// Улучшенный слайдер жёсткости края с визуальной обратной связью
+const HardnessSlider = memo(({ value, onChange }) => {
+  const [inputValue, setInputValue] = useState(value.toString());
+  
+  useEffect(() => {
+    setInputValue(value.toString());
+  }, [value]);
+  
+  const handleInputChange = useCallback((e) => {
+    const newValue = e.target.value;
+    setInputValue(newValue);
+    
+    const numValue = parseInt(newValue, 10);
+    if (!isNaN(numValue) && numValue >= BRUSH_HARDNESS.MIN && numValue <= BRUSH_HARDNESS.MAX) {
+      onChange(numValue);
+    }
+  }, [onChange]);
+  
+  const handleInputBlur = useCallback(() => {
+    const numValue = parseInt(inputValue, 10);
+    if (isNaN(numValue) || numValue < BRUSH_HARDNESS.MIN) {
+      setInputValue(BRUSH_HARDNESS.MIN.toString());
+      onChange(BRUSH_HARDNESS.MIN);
+    } else if (numValue > BRUSH_HARDNESS.MAX) {
+      setInputValue(BRUSH_HARDNESS.MAX.toString());
+      onChange(BRUSH_HARDNESS.MAX);
+    }
+  }, [inputValue, onChange]);
+  
+  // Визуальные пресеты жёсткости
+  const presets = [
+    { value: 0, label: 'Мягкая' },
+    { value: 50, label: 'Средняя' },
+    { value: 100, label: 'Жёсткая' }
+  ];
+  
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-2">
+        <label className="text-xs font-medium text-gray-700">Жёсткость края</label>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={inputValue}
+            onChange={handleInputChange}
+            onBlur={handleInputBlur}
+            min={BRUSH_HARDNESS.MIN}
+            max={BRUSH_HARDNESS.MAX}
+            className="w-14 px-2 py-1 text-xs text-right bg-gray-100 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <span className="text-xs text-gray-500">%</span>
+        </div>
+      </div>
+      
+      {/* Визуальные индикаторы мягкости */}
+      <div className="flex items-center gap-3 mb-2">
+        <div 
+          className="w-8 h-8 rounded-full flex-shrink-0"
+          style={{ 
+            background: `radial-gradient(circle, #374151 0%, transparent ${100 - value * 0.3}%)` 
+          }}
+          title="Мягкий край"
+        />
+        <input
+          type="range"
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="flex-1 h-2 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-400 rounded-lg appearance-none cursor-pointer"
+          min={BRUSH_HARDNESS.MIN}
+          max={BRUSH_HARDNESS.MAX}
+          style={{
+            background: `linear-gradient(to right, #e5e7eb 0%, #9ca3af ${value}%, #e5e7eb ${value}%, #e5e7eb 100%)`
+          }}
+        />
+        <div 
+          className="w-8 h-8 rounded-full bg-gray-700 flex-shrink-0"
+          title="Жёсткий край"
+        />
+      </div>
+      
+      {/* Быстрые пресеты */}
+      <div className="flex gap-1">
+        {presets.map((preset) => (
+          <button
+            key={preset.value}
+            onClick={() => onChange(preset.value)}
+            className={`flex-1 py-1.5 text-xs rounded-md transition-all ${
+              value === preset.value
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
     </div>
-  </div>
-));
+  );
+});
 
 // Панель трансформации
 const TransformPanel = memo(({ imageTransform, setImageTransform, onApply, onCancel, isMobile }) => (
@@ -201,6 +348,7 @@ function ToolbarWithLayers({
 }) {
   const fileInputRef = useRef(null);
   const [showAllColors, setShowAllColors] = useState(false);
+  const [showBrushSettings, setShowBrushSettings] = useState(true);
   
   const handleImageClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -273,52 +421,77 @@ function ToolbarWithLayers({
 
         <div className="border-t border-gray-200 my-4" />
 
-        <h3 className="text-sm font-semibold text-gray-900">Свойства</h3>
+        {/* Заголовок с toggle */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-gray-900">
+            {tool === TOOLS.DRAW ? 'Настройки кисти' : 'Настройки ластика'}
+          </h3>
+          <button
+            onClick={() => setShowBrushSettings(!showBrushSettings)}
+            className="text-xs text-blue-600 hover:text-blue-800"
+          >
+            {showBrushSettings ? 'Свернуть' : 'Развернуть'}
+          </button>
+        </div>
 
-        {/* Настройки кисти/ластика */}
-        <SizeSlider
-          label={tool === TOOLS.DRAW ? "Размер кисти" : "Размер ластика"}
-          value={brushSize}
-          onChange={setBrushSize}
-        />
+        {showBrushSettings && (
+          <>
+            {/* Превью кисти */}
+            <BrushPreview 
+              size={brushSize} 
+              hardness={brushHardness} 
+              color={brushColor}
+              isEraser={tool === TOOLS.ERASE}
+            />
 
-        {/* Жёсткость края - для обоих инструментов */}
-        <HardnessSlider
-          value={brushHardness}
-          onChange={setBrushHardness}
-        />
+            {/* Настройки кисти/ластика */}
+            <SizeSlider
+              label={tool === TOOLS.DRAW ? "Радиус кисти" : "Радиус ластика"}
+              value={brushSize}
+              onChange={setBrushSize}
+              min={1}
+              max={150}
+            />
 
-        {/* Цвет - только для кисти */}
-        {tool === TOOLS.DRAW && (
-          <div className="space-y-3">
-            <label className="text-xs font-medium text-gray-700 block">Цвет</label>
-            
-            {/* Полный color picker */}
-            <FullColorPicker color={brushColor} onChange={setBrushColor} />
-            
-            {/* Быстрые цвета */}
-            <div>
-              <button 
-                onClick={() => setShowAllColors(!showAllColors)}
-                className="text-xs text-blue-600 hover:text-blue-800 mb-2"
-              >
-                {showAllColors ? '▼ Скрыть быстрые цвета' : '▶ Показать быстрые цвета'}
-              </button>
-              
-              {showAllColors && (
-                <div className="grid grid-cols-10 gap-1.5">
-                  {COLOR_PRESETS.map((color) => (
-                    <ColorButton
-                      key={color}
-                      color={color}
-                      isActive={brushColor === color}
-                      onClick={() => setBrushColor(color)}
-                    />
-                  ))}
+            {/* Жёсткость края */}
+            <HardnessSlider
+              value={brushHardness}
+              onChange={setBrushHardness}
+            />
+
+            {/* Цвет - только для кисти */}
+            {tool === TOOLS.DRAW && (
+              <div className="space-y-3">
+                <label className="text-xs font-medium text-gray-700 block">Цвет</label>
+                
+                {/* Полный color picker */}
+                <FullColorPicker color={brushColor} onChange={setBrushColor} />
+                
+                {/* Быстрые цвета */}
+                <div>
+                  <button 
+                    onClick={() => setShowAllColors(!showAllColors)}
+                    className="text-xs text-blue-600 hover:text-blue-800 mb-2"
+                  >
+                    {showAllColors ? '▼ Скрыть быстрые цвета' : '▶ Показать быстрые цвета'}
+                  </button>
+                  
+                  {showAllColors && (
+                    <div className="grid grid-cols-10 gap-1.5">
+                      {COLOR_PRESETS.map((color) => (
+                        <ColorButton
+                          key={color}
+                          color={color}
+                          isActive={brushColor === color}
+                          onClick={() => setBrushColor(color)}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </div>
+              </div>
+            )}
+          </>
         )}
 
         <div className="border-t border-gray-200 my-4" />
