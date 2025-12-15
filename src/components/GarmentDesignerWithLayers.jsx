@@ -1,22 +1,13 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
-import { CANVAS_SIZE, MODEL_PATH, UV_LAYOUT_PATH, TOOLS, PERFORMANCE } from '../utils/constants';
-import { 
-  createGradientBackground, 
-  setupCamera, 
-  setupRenderer, 
-  setupControls, 
-  setupLights, 
-  setupGround, 
-  disposeScene,
-  isMobileDevice,
-  setupContextHandlers
-} from '../utils/sceneSetup';
+import { CANVAS_SIZE, MODEL_PATH, UV_LAYOUT_PATH, TOOLS, PERFORMANCE, BRUSH_HARDNESS } from '../utils/constants';
+import { createGradientBackground, setupCamera, setupRenderer, setupControls, setupLights, setupGround, disposeScene, isMobileDevice, setupContextHandlers } from '../utils/sceneSetup';
 import { loadModel, positionCamera } from '../utils/modelLoader';
 import { getCanvasCoords } from '../utils/drawingUtils';
 import { useLayers } from '../hooks/useLayers';
 import { useDrawingWithLayers } from '../hooks/useDrawingWithLayers';
 import { useImageTransformWithLayers } from '../hooks/useImageTransformWithLayers';
+import { createCmykPdf } from '../services/cmykExportService';
 import ToolbarWithLayers from './ToolbarWithLayers';
 import AIGenerationModal from './AIGenerationModal';
 
@@ -36,23 +27,16 @@ function useIsMobile() {
 function useUVLayout(onLoad) {
   const [uvLayoutImage, setUvLayoutImage] = useState(null);
   const onLoadRef = useRef(onLoad);
-  
   useEffect(() => { onLoadRef.current = onLoad; }, [onLoad]);
-  
   useEffect(() => {
     const img = new Image();
-    img.onload = () => {
-      setUvLayoutImage(img);
-      if (onLoadRef.current) onLoadRef.current();
-    };
+    img.onload = () => { setUvLayoutImage(img); if (onLoadRef.current) onLoadRef.current(); };
     img.onerror = () => console.error('Не удалось загрузить UV разметку');
     img.src = UV_LAYOUT_PATH;
   }, []);
-  
   return uvLayoutImage;
 }
 
-// Глобальный флаг для предотвращения двойной инициализации в StrictMode
 let globalSceneInitialized = false;
 
 function GarmentDesignerWithLayers() {
@@ -72,12 +56,14 @@ function GarmentDesignerWithLayers() {
   const [tool, setTool] = useState(TOOLS.DRAW);
   const [brushSize, setBrushSize] = useState(15);
   const [brushColor, setBrushColor] = useState('#000000');
+  const [brushHardness, setBrushHardness] = useState(BRUSH_HARDNESS.DEFAULT);
   const [loading, setLoading] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [showTools, setShowTools] = useState(true);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [webglError, setWebglError] = useState(null);
   const [updateTrigger, setUpdateTrigger] = useState(0);
+  const [exportingPdf, setExportingPdf] = useState(false);
   
   const lastPointerTimeRef = useRef(0);
   const layersRef = useRef([]);
@@ -90,12 +76,10 @@ function GarmentDesignerWithLayers() {
 
   const renderUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
-    
     if (!uvCtxRef.current) {
       uvCtxRef.current = uvCanvasRef.current.getContext('2d', { alpha: false });
     }
     const ctx = uvCtxRef.current;
-    
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
@@ -131,15 +115,10 @@ function GarmentDesignerWithLayers() {
       ctx.globalAlpha = 1.0;
     }
     
-    if (textureRef.current) {
-      textureRef.current.needsUpdate = true;
-    }
+    if (textureRef.current) textureRef.current.needsUpdate = true;
   }, []);
 
-  const handleUVLayoutLoaded = useCallback(() => {
-    renderUVCanvas();
-  }, [renderUVCanvas]);
-
+  const handleUVLayoutLoaded = useCallback(() => { renderUVCanvas(); }, [renderUVCanvas]);
   const uvLayoutImage = useUVLayout(handleUVLayoutLoaded);
   
   useEffect(() => {
@@ -161,10 +140,7 @@ function GarmentDesignerWithLayers() {
     undo, redo, canUndo, canRedo
   } = useLayers(updateCanvas);
 
-  useEffect(() => {
-    layersRef.current = layers;
-    renderUVCanvas();
-  }, [layers, renderUVCanvas]);
+  useEffect(() => { layersRef.current = layers; renderUVCanvas(); }, [layers, renderUVCanvas]);
 
   const { isDrawing, startDrawing, stopDrawing, drawOnCanvas } = useDrawingWithLayers(
     uvLayoutImage, getActiveLayer, addDrawingLayer, saveToHistory, updateCanvas
@@ -182,24 +158,16 @@ function GarmentDesignerWithLayers() {
     renderUVCanvas();
   }, [pendingImage, imageTransform, renderUVCanvas]);
 
-  const handleAIImageGenerated = useCallback((img) => {
-    setDesignImageDirect(img);
-  }, [setDesignImageDirect]);
+  const handleAIImageGenerated = useCallback((img) => { setDesignImageDirect(img); }, [setDesignImageDirect]);
 
-  // Инициализация Three.js с защитой от двойной инициализации
+  // Инициализация Three.js
   useEffect(() => {
-    // Защита от двойной инициализации в StrictMode
-    if (!containerRef.current || globalSceneInitialized || rendererRef.current) {
-      return;
-    }
-    
+    if (!containerRef.current || globalSceneInitialized || rendererRef.current) return;
     mountedRef.current = true;
     globalSceneInitialized = true;
     
     const container = containerRef.current;
     const isMobileFlag = isMobileDeviceRef.current;
-    
-    console.log(`[GarmentDesigner] Initializing 3D scene, mobile: ${isMobileFlag}`);
     
     const scene = new THREE.Scene();
     scene.background = createGradientBackground();
@@ -209,9 +177,8 @@ function GarmentDesignerWithLayers() {
     cameraRef.current = camera;
     
     const renderer = setupRenderer(container);
-    
     if (!renderer) {
-      setWebglError('WebGL не поддерживается на вашем устройстве');
+      setWebglError('WebGL не поддерживается');
       globalSceneInitialized = false;
       return;
     }
@@ -219,21 +186,9 @@ function GarmentDesignerWithLayers() {
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
     
-    setupContextHandlers(
-      renderer,
-      () => {
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-          animationFrameRef.current = null;
-        }
-        console.warn('[GarmentDesigner] WebGL context lost');
-        setWebglError('WebGL контекст потерян. Перезагрузите страницу.');
-      },
-      () => {
-        console.log('[GarmentDesigner] WebGL context restored');
-        setWebglError(null);
-        if (mountedRef.current) animate();
-      }
+    setupContextHandlers(renderer, 
+      () => { if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current); setWebglError('WebGL контекст потерян'); },
+      () => { setWebglError(null); if (mountedRef.current) animate(); }
     );
     
     const controls = setupControls(camera, renderer.domElement);
@@ -244,18 +199,13 @@ function GarmentDesignerWithLayers() {
     
     const animate = () => {
       if (!mountedRef.current) return;
-      
       animationFrameRef.current = requestAnimationFrame(animate);
-      
       try {
         const gl = renderer.getContext();
         if (gl && gl.isContextLost()) return;
-        
         controls.update();
         renderer.render(scene, camera);
-      } catch (e) {
-        console.error('[GarmentDesigner] Render error:', e);
-      }
+      } catch (e) { console.error('[Render error]:', e); }
     };
     animate();
     
@@ -274,110 +224,58 @@ function GarmentDesignerWithLayers() {
     return () => {
       mountedRef.current = false;
       globalSceneInitialized = false;
-      
       window.removeEventListener('resize', handleResize);
-      
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-      
-      if (sceneRef.current && rendererRef.current) {
-        disposeScene(sceneRef.current, rendererRef.current);
-      }
-      
-      if (container && rendererRef.current?.domElement) {
-        try {
-          container.removeChild(rendererRef.current.domElement);
-        } catch (e) {}
-      }
-      
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (sceneRef.current && rendererRef.current) disposeScene(sceneRef.current, rendererRef.current);
+      if (container && rendererRef.current?.domElement) try { container.removeChild(rendererRef.current.domElement); } catch {}
       rendererRef.current = null;
-      sceneRef.current = null;
-      cameraRef.current = null;
-      controlsRef.current = null;
     };
   }, []);
 
   // Загрузка модели
   useEffect(() => {
-    if (!sceneRef.current || !rendererRef.current || !uvCanvasRef.current || modelLoadedRef.current) {
-      return;
-    }
-    
+    if (!sceneRef.current || !rendererRef.current || !uvCanvasRef.current || modelLoadedRef.current) return;
     modelLoadedRef.current = true;
     setLoading(true);
     
-    const isMobileFlag = isMobileDeviceRef.current;
-    
-    loadModel(
-      MODEL_PATH,
-      uvCanvasRef.current,
+    loadModel(MODEL_PATH, uvCanvasRef.current,
       (loadedModel, texture) => {
         if (!mountedRef.current || !sceneRef.current) return;
-        
         modelGroupRef.current = loadedModel;
         textureRef.current = texture;
-        
-        if (isMobileFlag) {
-          loadedModel.traverse((child) => {
-            if (child.isMesh) {
-              child.castShadow = false;
-              child.receiveShadow = false;
-            }
-          });
-        }
-        
         sceneRef.current.add(loadedModel);
         positionCamera(cameraRef.current, controlsRef.current);
         setLoading(false);
         renderUVCanvas();
-        console.log('[GarmentDesigner] Model loaded successfully');
       },
-      (error) => {
-        console.error('[GarmentDesigner] Model load error:', error);
-        modelLoadedRef.current = false;
-        setLoading(false);
-        setWebglError('Не удалось загрузить 3D модель');
-      }
+      (error) => { modelLoadedRef.current = false; setLoading(false); setWebglError('Не удалось загрузить модель'); }
     );
   }, [renderUVCanvas]);
 
-  // Touch/Mouse обработчики БЕЗ preventDefault для passive событий
+  // Обработчики pointer
   const handlePointerDown = useCallback((e) => {
-    // Не вызываем preventDefault для touch событий (они passive по умолчанию)
     const coords = getCanvasCoords(e, uvCanvasRef.current);
-    
     if (isTransformMode && pendingImage) {
       startDrag(coords.x, coords.y, e.touches);
       return;
     }
-    
     startDrawing(tool);
-    drawOnCanvas(coords.x, coords.y, tool, brushColor, brushSize, true);
-  }, [isTransformMode, pendingImage, tool, brushColor, brushSize, startDrag, startDrawing, drawOnCanvas]);
+    drawOnCanvas(coords.x, coords.y, tool, brushColor, brushSize, true, brushHardness);
+  }, [isTransformMode, pendingImage, tool, brushColor, brushSize, brushHardness, startDrag, startDrawing, drawOnCanvas]);
 
   const handlePointerMove = useCallback((e) => {
     const now = Date.now();
     if (now - lastPointerTimeRef.current < PERFORMANCE.POINTER_THROTTLE_MS) return;
     lastPointerTimeRef.current = now;
-    
     const coords = getCanvasCoords(e, uvCanvasRef.current);
-    
-    if (isTransformMode) {
-      drag(coords.x, coords.y, e.touches);
-      return;
-    }
-    
-    drawOnCanvas(coords.x, coords.y, tool, brushColor, brushSize);
-  }, [isTransformMode, tool, brushColor, brushSize, drag, drawOnCanvas]);
+    if (isTransformMode) { drag(coords.x, coords.y, e.touches); return; }
+    drawOnCanvas(coords.x, coords.y, tool, brushColor, brushSize, false, brushHardness);
+  }, [isTransformMode, tool, brushColor, brushSize, brushHardness, drag, drawOnCanvas]);
 
-  const handlePointerUp = useCallback(() => {
-    stopDrawing();
-    stopDrag();
-  }, [stopDrawing, stopDrag]);
+  const handlePointerUp = useCallback(() => { stopDrawing(); stopDrag(); }, [stopDrawing, stopDrag]);
 
-  const downloadTexture = useCallback(() => {
+  // Экспорт PNG (RGB)
+  const downloadTexturePng = useCallback(() => {
     if (!uvCanvasRef.current) return;
     const link = document.createElement('a');
     link.download = 'garment-design.png';
@@ -385,17 +283,30 @@ function GarmentDesignerWithLayers() {
     link.click();
   }, []);
 
+  // Экспорт PDF (CMYK)
+  const downloadTextureCmykPdf = useCallback(async () => {
+    if (!uvCanvasRef.current || exportingPdf) return;
+    setExportingPdf(true);
+    try {
+      await createCmykPdf(uvCanvasRef.current, 'garment-design-cmyk.pdf');
+    } catch (err) {
+      console.error('PDF export error:', err);
+      alert('Ошибка экспорта PDF: ' + err.message);
+    } finally {
+      setExportingPdf(false);
+    }
+  }, [exportingPdf]);
+
   const toggleWireframe = useCallback(() => {
     if (!modelGroupRef.current) return;
     const nw = !wireframe;
     setWireframe(nw);
-    modelGroupRef.current.traverse((c) => {
-      if (c.isMesh && c.material) c.material.wireframe = nw;
-    });
+    modelGroupRef.current.traverse((c) => { if (c.isMesh && c.material) c.material.wireframe = nw; });
   }, [wireframe]);
 
   const toolbarProps = useMemo(() => ({
     tool, setTool, brushSize, setBrushSize, brushColor, setBrushColor,
+    brushHardness, setBrushHardness,
     onImageUpload: handleImageUpload, onAIGenerate: () => setIsAIModalOpen(true),
     onUndo: undo, onRedo: redo, canUndo, canRedo,
     isTransformMode, imageTransform, setImageTransform,
@@ -405,22 +316,17 @@ function GarmentDesignerWithLayers() {
     onMoveLayerUp: moveLayerUp, onMoveLayerDown: moveLayerDown,
     onDeleteLayer: deleteLayer, onAddDrawingLayer: addDrawingLayer,
     onClearLayer: clearActiveLayer, onClearAll: clearAllLayers
-  }), [
-    tool, brushSize, brushColor, handleImageUpload, undo, redo, canUndo, canRedo,
+  }), [tool, brushSize, brushColor, brushHardness, handleImageUpload, undo, redo, canUndo, canRedo,
     isTransformMode, imageTransform, setImageTransform, applyImage, cancelTransform, isMobile,
     layers, activeLayerId, setActiveLayerId, toggleLayerVisibility, moveLayerUp, moveLayerDown,
-    deleteLayer, addDrawingLayer, clearActiveLayer, clearAllLayers
-  ]);
+    deleteLayer, addDrawingLayer, clearActiveLayer, clearAllLayers]);
 
   return (
     <div className="w-full h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col lg:flex-row overflow-hidden">
       {isMobile && (
         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm flex-shrink-0">
           <h1 className="text-lg font-semibold text-gray-900">Дизайнер Одежды</h1>
-          <button 
-            onClick={() => setShowTools(!showTools)} 
-            className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
-          >
+          <button onClick={() => setShowTools(!showTools)} className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
@@ -432,28 +338,31 @@ function GarmentDesignerWithLayers() {
         <div className="bg-white border-b border-gray-200 px-4 py-3 flex-shrink-0">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
-              <button 
-                onClick={toggleWireframe} 
-                disabled={loading} 
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
-                  wireframe 
-                    ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/30' 
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                } disabled:opacity-50`}
-              >
+              <button onClick={toggleWireframe} disabled={loading} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${wireframe ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/30' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} disabled:opacity-50`}>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5z" />
                 </svg>
                 {wireframe ? 'Сплошной' : 'Каркас'}
               </button>
-              <button 
-                onClick={downloadTexture} 
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-green-500 text-white hover:bg-green-600 transition-all shadow-lg shadow-green-500/30 flex items-center gap-2"
-              >
+              
+              {/* Кнопка PNG */}
+              <button onClick={downloadTexturePng} className="px-4 py-2 rounded-lg text-sm font-medium bg-green-500 text-white hover:bg-green-600 shadow-lg shadow-green-500/30 flex items-center gap-2">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                Экспорт
+                PNG (RGB)
+              </button>
+              
+              {/* Кнопка CMYK PDF */}
+              <button onClick={downloadTextureCmykPdf} disabled={exportingPdf} className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-500 text-white hover:bg-blue-600 shadow-lg shadow-blue-500/30 flex items-center gap-2 disabled:opacity-50">
+                {exportingPdf ? (
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                )}
+                PDF (CMYK)
               </button>
             </div>
             {loading && (
@@ -476,10 +385,7 @@ function GarmentDesignerWithLayers() {
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Ошибка 3D</h3>
                 <p className="text-sm text-gray-600 mb-4">{webglError}</p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium"
-                >
+                <button onClick={() => window.location.reload()} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium">
                   Перезагрузить
                 </button>
               </div>
@@ -488,34 +394,14 @@ function GarmentDesignerWithLayers() {
         </div>
       </main>
       
-      <aside className={`${
-        isMobile 
-          ? `fixed inset-x-0 bottom-0 bg-white rounded-t-3xl shadow-2xl transform transition-transform duration-300 ${
-              showTools ? 'translate-y-0' : 'translate-y-full'
-            } z-40 max-h-[70vh] overflow-auto` 
-          : 'w-96 bg-white lg:rounded-2xl lg:m-4 lg:ml-0 lg:shadow-xl flex flex-col overflow-hidden'
-      }`}>
-        {isMobile && (
-          <div className="flex justify-center pt-2 pb-4">
-            <div className="w-12 h-1 bg-gray-300 rounded-full" />
-          </div>
-        )}
+      <aside className={`${isMobile ? `fixed inset-x-0 bottom-0 bg-white rounded-t-3xl shadow-2xl transform transition-transform duration-300 ${showTools ? 'translate-y-0' : 'translate-y-full'} z-40 max-h-[70vh] overflow-auto` : 'w-96 bg-white lg:rounded-2xl lg:m-4 lg:ml-0 lg:shadow-xl flex flex-col overflow-hidden'}`}>
+        {isMobile && <div className="flex justify-center pt-2 pb-4"><div className="w-12 h-1 bg-gray-300 rounded-full" /></div>}
         <div className="p-4 border-b border-gray-200 flex-shrink-0">
-          <canvas 
-            ref={uvCanvasRef} 
-            width={CANVAS_SIZE} 
-            height={CANVAS_SIZE} 
-            className={`w-full border-2 border-gray-200 rounded-2xl bg-white shadow-lg ${
-              isTransformMode ? 'cursor-move' : 'cursor-crosshair'
-            }`}
+          <canvas ref={uvCanvasRef} width={CANVAS_SIZE} height={CANVAS_SIZE}
+            className={`w-full border-2 border-gray-200 rounded-2xl bg-white shadow-lg ${isTransformMode ? 'cursor-move' : 'cursor-crosshair'}`}
             style={{ touchAction: 'none' }}
-            onMouseDown={handlePointerDown}
-            onMouseMove={handlePointerMove}
-            onMouseUp={handlePointerUp}
-            onMouseLeave={handlePointerUp}
-            onTouchStart={handlePointerDown}
-            onTouchMove={handlePointerMove}
-            onTouchEnd={handlePointerUp}
+            onMouseDown={handlePointerDown} onMouseMove={handlePointerMove} onMouseUp={handlePointerUp} onMouseLeave={handlePointerUp}
+            onTouchStart={handlePointerDown} onTouchMove={handlePointerMove} onTouchEnd={handlePointerUp}
           />
         </div>
         <div className="flex-1 overflow-auto">
@@ -523,11 +409,7 @@ function GarmentDesignerWithLayers() {
         </div>
       </aside>
       
-      <AIGenerationModal 
-        isOpen={isAIModalOpen} 
-        onClose={() => setIsAIModalOpen(false)} 
-        onImageGenerated={handleAIImageGenerated} 
-      />
+      <AIGenerationModal isOpen={isAIModalOpen} onClose={() => setIsAIModalOpen(false)} onImageGenerated={handleAIImageGenerated} />
     </div>
   );
 }

@@ -5,18 +5,19 @@ const isMobile = typeof window !== 'undefined' && (
 );
 
 // Размер canvas - уменьшаем на мобильных для производительности
-// 1024 на десктопе, 512 на мобильных
 export const CANVAS_SIZE = isMobile ? 512 : 1024;
 
 export const MODEL_PATH = '/materials/model.glb';
 export const UV_LAYOUT_PATH = '/materials/uv-layout.png';
 
+// Базовые цвета для быстрого доступа (уменьшено, т.к. есть color picker)
 export const COLOR_PRESETS = [
   '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF',
-  '#FFFF00', '#FF00FF', '#00FFFF', '#FF6B35', '#004E89'
+  '#FFFF00', '#FF00FF', '#00FFFF', '#FF6B35', '#004E89',
+  '#8B5CF6', '#EC4899', '#10B981', '#F59E0B', '#6366F1'
 ];
 
-export const MAX_HISTORY = isMobile ? 10 : 20; // Меньше истории на мобильных
+export const MAX_HISTORY = isMobile ? 10 : 20;
 
 export const TOOLS = {
   DRAW: 'draw',
@@ -24,13 +25,19 @@ export const TOOLS = {
   IMAGE: 'image'
 };
 
-// Настройки производительности с учётом мобильных
+// Настройки края кисти/ластика
+export const BRUSH_HARDNESS = {
+  MIN: 0,    // Полностью мягкий край
+  MAX: 100,  // Полностью жёсткий край
+  DEFAULT: 80
+};
+
+// Настройки производительности
 export const PERFORMANCE = {
-  POINTER_THROTTLE_MS: isMobile ? 32 : 16, // ~30fps на мобильных, ~60fps на десктопе
-  TEXTURE_UPDATE_MS: isMobile ? 100 : 50, // Реже обновляем текстуру на мобильных
-  MIN_DRAW_DISTANCE: isMobile ? 5 : 3, // Больше расстояние между точками на мобильных
+  POINTER_THROTTLE_MS: isMobile ? 32 : 16,
+  TEXTURE_UPDATE_MS: isMobile ? 100 : 50,
+  MIN_DRAW_DISTANCE: isMobile ? 5 : 3,
   TRANSFORM_THROTTLE_MS: isMobile ? 50 : 32
 };
 
-// Реэкспорт типов слоёв для удобства
 export { LAYER_TYPES } from './layerTypes';

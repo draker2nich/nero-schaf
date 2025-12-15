@@ -56,6 +56,30 @@ input[type="range"]::-moz-range-thumb:hover {
   transform: scale(1.1);
 }
 
+/* Стили для color picker input */
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  width: 0;
+  height: 0;
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+input[type="color"]::-moz-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
 /* Отключение выделения для UI элементов */
 .select-none {
   -webkit-user-select: none;
@@ -172,4 +196,13 @@ textarea:focus-visible {
 /* Border width 3 для спиннера */
 .border-3 {
   border-width: 3px;
+}
+
+/* Превью кисти с жёсткостью */
+.brush-preview-soft {
+  background: radial-gradient(circle, currentColor 0%, transparent 100%);
+}
+
+.brush-preview-hard {
+  background: currentColor;
 }

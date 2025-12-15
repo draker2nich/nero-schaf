@@ -114,15 +114,24 @@ async function optimizeImage(buffer, mimeType) {
  * Проверка доступности API
  */
 app.get('/api/ai/status', async (req, res) => {
+  console.log('=== Проверка API ===');
+  console.log('GEMINI_API_KEY существует:', !!GEMINI_API_KEY);
+  console.log('ai инициализирован:', !!ai);
+  
   if (!GEMINI_API_KEY || !ai) {
+    console.log('API не настроен');
     return res.json({ available: false, error: 'API не настроен' });
   }
   
   try {
-    // Простая проверка - пробуем получить список моделей
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`
-    );
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`;
+    console.log('Запрос к:', url.replace(GEMINI_API_KEY, 'API_KEY_HIDDEN'));
+    
+    const response = await fetch(url);
+    console.log('Статус ответа:', response.status);
+    
+    const data = await response.json();
+    console.log('Ответ:', JSON.stringify(data).substring(0, 200));
     
     if (response.ok) {
       return res.json({ available: true });
@@ -132,9 +141,10 @@ app.get('/api/ai/status', async (req, res) => {
       return res.json({ available: false, error: 'Превышен лимит запросов' });
     }
     
-    return res.json({ available: false, error: 'Ошибка API' });
+    return res.json({ available: false, error: data.error?.message || 'Ошибка API' });
   } catch (err) {
-    return res.json({ available: false, error: 'Ошибка подключения' });
+    console.error('Ошибка:', err);
+    return res.json({ available: false, error: 'Ошибка подключения: ' + err.message });
   }
 });
 
