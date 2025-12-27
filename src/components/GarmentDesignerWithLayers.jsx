@@ -74,12 +74,18 @@ function GarmentDesignerWithLayers() {
   const isMobile = useIsMobile();
   const isMobileDeviceRef = useRef(isMobileDevice());
 
+  // ИСПРАВЛЕННЫЙ renderUVCanvas с высоким качеством
   const renderUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
     if (!uvCtxRef.current) {
       uvCtxRef.current = uvCanvasRef.current.getContext('2d', { alpha: false });
     }
     const ctx = uvCtxRef.current;
+    
+    // Включаем высококачественное сглаживание
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
@@ -94,13 +100,20 @@ function GarmentDesignerWithLayers() {
       ctx.globalAlpha = 1;
     }
     
+    // Рендеринг pending изображения с учётом оригинальных пропорций
     const pendingImg = pendingImageRef.current;
     const imgTransform = imageTransformRef.current;
     if (pendingImg && imgTransform) {
+      const originalWidth = pendingImg.naturalWidth || pendingImg.width;
+      const originalHeight = pendingImg.naturalHeight || pendingImg.height;
+      
+      // Размер с учётом пропорций
       const imgW = CANVAS_SIZE * imgTransform.scale;
-      const imgH = CANVAS_SIZE * imgTransform.scale;
+      const imgH = CANVAS_SIZE * imgTransform.scale * (originalHeight / originalWidth);
+      
       const centerX = CANVAS_SIZE / 2 + imgTransform.x;
       const centerY = CANVAS_SIZE / 2 + imgTransform.y;
+      
       ctx.save();
       ctx.translate(centerX, centerY);
       ctx.rotate(imgTransform.rotation * Math.PI / 180);
@@ -148,6 +161,7 @@ function GarmentDesignerWithLayers() {
 
   const {
     pendingImage, imageTransform, setImageTransform, isTransformMode,
+    qualityInfo, // ДОБАВЛЕНО
     handleImageUpload, setDesignImageDirect, startDrag, drag, stopDrag,
     applyImage, cancelTransform
   } = useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveToHistory, updateCanvas);
@@ -274,7 +288,6 @@ function GarmentDesignerWithLayers() {
 
   const handlePointerUp = useCallback(() => { stopDrawing(); stopDrag(); }, [stopDrawing, stopDrag]);
 
-  // Экспорт PNG (RGB)
   const downloadTexturePng = useCallback(() => {
     if (!uvCanvasRef.current) return;
     const link = document.createElement('a');
@@ -283,7 +296,6 @@ function GarmentDesignerWithLayers() {
     link.click();
   }, []);
 
-  // Экспорт PDF (CMYK)
   const downloadTextureCmykPdf = useCallback(async () => {
     if (!uvCanvasRef.current || exportingPdf) return;
     setExportingPdf(true);
@@ -304,6 +316,7 @@ function GarmentDesignerWithLayers() {
     modelGroupRef.current.traverse((c) => { if (c.isMesh && c.material) c.material.wireframe = nw; });
   }, [wireframe]);
 
+  // ДОБАВЛЕНО qualityInfo в toolbarProps
   const toolbarProps = useMemo(() => ({
     tool, setTool, brushSize, setBrushSize, brushColor, setBrushColor,
     brushHardness, setBrushHardness,
@@ -311,6 +324,7 @@ function GarmentDesignerWithLayers() {
     onUndo: undo, onRedo: redo, canUndo, canRedo,
     isTransformMode, imageTransform, setImageTransform,
     onApplyImage: applyImage, onCancelImage: cancelTransform, isMobile,
+    qualityInfo, // ДОБАВЛЕНО
     layers, activeLayerId, onSelectLayer: setActiveLayerId,
     onToggleLayerVisibility: toggleLayerVisibility,
     onMoveLayerUp: moveLayerUp, onMoveLayerDown: moveLayerDown,
@@ -318,6 +332,7 @@ function GarmentDesignerWithLayers() {
     onClearLayer: clearActiveLayer, onClearAll: clearAllLayers
   }), [tool, brushSize, brushColor, brushHardness, handleImageUpload, undo, redo, canUndo, canRedo,
     isTransformMode, imageTransform, setImageTransform, applyImage, cancelTransform, isMobile,
+    qualityInfo, // ДОБАВЛЕНО
     layers, activeLayerId, setActiveLayerId, toggleLayerVisibility, moveLayerUp, moveLayerDown,
     deleteLayer, addDrawingLayer, clearActiveLayer, clearAllLayers]);
 
@@ -339,38 +354,19 @@ function GarmentDesignerWithLayers() {
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
               <button onClick={toggleWireframe} disabled={loading} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${wireframe ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/30' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} disabled:opacity-50`}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5z" />
-                </svg>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5z" /></svg>
                 {wireframe ? 'Сплошной' : 'Каркас'}
               </button>
-              
-              {/* Кнопка PNG */}
               <button onClick={downloadTexturePng} className="px-4 py-2 rounded-lg text-sm font-medium bg-green-500 text-white hover:bg-green-600 shadow-lg shadow-green-500/30 flex items-center gap-2">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                 PNG (RGB)
               </button>
-              
-              {/* Кнопка CMYK PDF */}
               <button onClick={downloadTextureCmykPdf} disabled={exportingPdf} className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-500 text-white hover:bg-blue-600 shadow-lg shadow-blue-500/30 flex items-center gap-2 disabled:opacity-50">
-                {exportingPdf ? (
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                )}
+                {exportingPdf ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>}
                 PDF (CMYK)
               </button>
             </div>
-            {loading && (
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-                Загрузка...
-              </div>
-            )}
+            {loading && <div className="flex items-center gap-2 text-sm text-gray-500"><div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />Загрузка...</div>}
           </div>
         </div>
         
@@ -379,15 +375,11 @@ function GarmentDesignerWithLayers() {
             <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 z-10">
               <div className="bg-white rounded-xl p-6 m-4 max-w-sm text-center">
                 <div className="w-12 h-12 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
-                  <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
+                  <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Ошибка 3D</h3>
                 <p className="text-sm text-gray-600 mb-4">{webglError}</p>
-                <button onClick={() => window.location.reload()} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium">
-                  Перезагрузить
-                </button>
+                <button onClick={() => window.location.reload()} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium">Перезагрузить</button>
               </div>
             </div>
           )}
