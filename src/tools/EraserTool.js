@@ -1,7 +1,5 @@
 /**
  * Инструмент "Ластик"
- * Использует destination-out для стирания
- * Поддерживает давление планшета
  */
 
 import { BaseTool } from './BaseTool';
@@ -46,6 +44,8 @@ export class EraserTool extends BaseTool {
   }
 
   erasePoint(x, y, settings, context) {
+    if (!this.isPointInBounds(x, y)) return;
+    
     const { ctx } = context;
     const { size, hardness, opacity } = settings;
     

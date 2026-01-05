@@ -1,5 +1,5 @@
 import React from 'react';
-import GarmentDesignerWithLayers from './components/GarmentDesignerWithLayers';
+import GarmentDesignerWithLayers from './components/Designer';
 import './index.css';
 
 function App() {

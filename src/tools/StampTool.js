@@ -1,18 +1,16 @@
 /**
  * Инструмент "Штамп" (Clone Stamp)
  * 
- * Использование:
- * 1. Alt+Click для выбора источника
- * 2. Рисование для клонирования области
- * 
- * Поддерживает:
- * - Размер, жёсткость, прозрачность
- * - Давление планшета
- * - Смещение относительно источника
+ * Исправления:
+ * - Применение UV-маски (не рисует за пределами)
+ * - Корректное обновление кэша при изменении слоёв
+ * - Правильная работа со смещением
+ * - Ограничение рисования границами холста
  */
 
 import { BaseTool } from './BaseTool';
 import { CANVAS_SIZE, PERFORMANCE } from '../utils/constants';
+import { isPixelInUVMask } from '../utils/drawingUtils';
 
 export class StampTool extends BaseTool {
   constructor() {
@@ -26,41 +24,62 @@ export class StampTool extends BaseTool {
     this.sourcePoint = null;
     // Смещение от источника
     this.offset = { x: 0, y: 0 };
-    // Флаг установки источника
-    this.settingSource = false;
     // Первая точка рисования (для вычисления offset)
     this.firstDrawPoint = null;
     // Кэш изображения источника
     this.sourceImageData = null;
+    // Флаг необходимости обновления кэша
+    this.needsCacheUpdate = true;
   }
 
   onSelect(context) {
-    // Сброс источника при выборе инструмента
-    // this.sourcePoint = null; // Можно оставить источник между использованиями
+    // Помечаем что нужно обновить кэш при следующем использовании
+    this.needsCacheUpdate = true;
   }
 
   /**
    * Установка источника клонирования
-   * @param {Object} point - { x, y }
-   * @param {Object} context - контекст
    */
   setSource(point, context) {
+    // Проверяем что точка в пределах холста
+    if (point.x < 0 || point.x >= CANVAS_SIZE || point.y < 0 || point.y >= CANVAS_SIZE) {
+      return false;
+    }
+    
     this.sourcePoint = { x: point.x, y: point.y };
     this.firstDrawPoint = null;
     this.offset = { x: 0, y: 0 };
+    this.needsCacheUpdate = true;
     
-    // Кэшируем изображение для производительности
+    // Кэшируем изображение
     this.cacheSourceImage(context);
     
     return true;
   }
 
+  /**
+   * Принудительное обновление кэша
+   */
+  invalidateCache() {
+    this.needsCacheUpdate = true;
+    this.sourceImageData = null;
+  }
+
   cacheSourceImage(context) {
     const { compositeCanvas } = context;
-    if (!compositeCanvas) return;
+    if (!compositeCanvas) {
+      console.warn('StampTool: compositeCanvas not available');
+      return;
+    }
     
-    const compositeCtx = compositeCanvas.getContext('2d');
-    this.sourceImageData = compositeCtx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    try {
+      const compositeCtx = compositeCanvas.getContext('2d');
+      this.sourceImageData = compositeCtx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      this.needsCacheUpdate = false;
+    } catch (e) {
+      console.error('StampTool: failed to cache source image', e);
+      this.sourceImageData = null;
+    }
   }
 
   hasSource() {
@@ -68,13 +87,18 @@ export class StampTool extends BaseTool {
   }
 
   getSourcePoint() {
-    return this.sourcePoint;
+    return this.sourcePoint ? { ...this.sourcePoint } : null;
   }
 
   onPointerDown(point, context) {
     // Если нет источника, показываем сообщение
     if (!this.hasSource()) {
       return { needSource: true };
+    }
+    
+    // Обновляем кэш если нужно
+    if (this.needsCacheUpdate || !this.sourceImageData) {
+      this.cacheSourceImage(context);
     }
     
     super.onPointerDown(point, context);
@@ -114,8 +138,20 @@ export class StampTool extends BaseTool {
     this.lastPoint = point;
   }
 
+  onPointerUp(point, context) {
+    super.onPointerUp(point, context);
+    // После окончания рисования помечаем что нужно обновить кэш
+    this.needsCacheUpdate = true;
+  }
+
   stampPoint(x, y, settings, context) {
     if (!this.sourceImageData) return;
+    
+    // Проверяем что центр штампа попадает в UV-маску
+    if (!isPixelInUVMask(x, y)) return;
+    
+    // Проверяем границы холста
+    if (x < 0 || x >= CANVAS_SIZE || y < 0 || y >= CANVAS_SIZE) return;
     
     const { ctx } = context;
     const { size, hardness, opacity } = settings;
@@ -124,34 +160,39 @@ export class StampTool extends BaseTool {
     const sourceX = x + this.offset.x;
     const sourceY = y + this.offset.y;
     
+    // Проверяем что источник в пределах холста
+    if (sourceX < 0 || sourceX >= CANVAS_SIZE || sourceY < 0 || sourceY >= CANVAS_SIZE) return;
+    
     ctx.save();
     ctx.globalAlpha = opacity / 100;
     
-    // Создаём временный canvas для маскирования
+    // Размер временного canvas с запасом
+    const tempSize = Math.ceil(size * 2 + 4);
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = size * 2 + 4;
-    tempCanvas.height = size * 2 + 4;
+    tempCanvas.width = tempSize;
+    tempCanvas.height = tempSize;
     const tempCtx = tempCanvas.getContext('2d');
     
     // Центр временного canvas
-    const centerX = size + 2;
-    const centerY = size + 2;
+    const centerX = tempSize / 2;
+    const centerY = tempSize / 2;
     
     // Копируем область из источника
     const srcLeft = Math.round(sourceX - size - 2);
     const srcTop = Math.round(sourceY - size - 2);
     
-    // Рисуем пиксели из кэшированного изображения
-    const destImageData = tempCtx.createImageData(tempCanvas.width, tempCanvas.height);
+    // Создаём ImageData для временного canvas
+    const destImageData = tempCtx.createImageData(tempSize, tempSize);
     
-    for (let dy = 0; dy < tempCanvas.height; dy++) {
-      for (let dx = 0; dx < tempCanvas.width; dx++) {
+    for (let dy = 0; dy < tempSize; dy++) {
+      for (let dx = 0; dx < tempSize; dx++) {
         const srcPx = srcLeft + dx;
         const srcPy = srcTop + dy;
         
+        // Проверяем границы источника
         if (srcPx >= 0 && srcPx < CANVAS_SIZE && srcPy >= 0 && srcPy < CANVAS_SIZE) {
           const srcIdx = (srcPy * CANVAS_SIZE + srcPx) * 4;
-          const destIdx = (dy * tempCanvas.width + dx) * 4;
+          const destIdx = (dy * tempSize + dx) * 4;
           
           destImageData.data[destIdx] = this.sourceImageData.data[srcIdx];
           destImageData.data[destIdx + 1] = this.sourceImageData.data[srcIdx + 1];
@@ -190,10 +231,37 @@ export class StampTool extends BaseTool {
     tempCtx.arc(centerX, centerY, size, 0, Math.PI * 2);
     tempCtx.fill();
     
+    // Применяем UV-маску к временному canvas
+    tempCtx.globalCompositeOperation = 'destination-in';
+    this.applyUVMaskToTemp(tempCtx, x - centerX, y - centerY, tempSize);
+    
     // Рисуем на целевой canvas
     ctx.drawImage(tempCanvas, x - centerX, y - centerY);
     
     ctx.restore();
+  }
+
+  /**
+   * Применение UV-маски к временному canvas
+   */
+  applyUVMaskToTemp(tempCtx, offsetX, offsetY, size) {
+    const imageData = tempCtx.getImageData(0, 0, size, size);
+    const data = imageData.data;
+    
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const canvasX = offsetX + x;
+        const canvasY = offsetY + y;
+        
+        // Если пиксель за пределами UV-маски, делаем его прозрачным
+        if (!isPixelInUVMask(canvasX, canvasY)) {
+          const idx = (y * size + x) * 4;
+          data[idx + 3] = 0; // Alpha = 0
+        }
+      }
+    }
+    
+    tempCtx.putImageData(imageData, 0, 0);
   }
 
   renderPreview(previewCtx, point, settings, context) {
@@ -211,29 +279,50 @@ export class StampTool extends BaseTool {
     previewCtx.stroke();
     
     // Показываем источник если установлен
-    if (this.hasSource()) {
+    if (this.hasSource() && this.firstDrawPoint) {
       const sourceX = point.x + this.offset.x;
       const sourceY = point.y + this.offset.y;
       
-      previewCtx.strokeStyle = '#ff0000';
-      previewCtx.setLineDash([2, 2]);
-      previewCtx.beginPath();
-      previewCtx.arc(sourceX, sourceY, size, 0, Math.PI * 2);
-      previewCtx.stroke();
+      // Проверяем что источник в пределах холста
+      if (sourceX >= 0 && sourceX < CANVAS_SIZE && sourceY >= 0 && sourceY < CANVAS_SIZE) {
+        previewCtx.strokeStyle = '#ff0000';
+        previewCtx.setLineDash([2, 2]);
+        previewCtx.beginPath();
+        previewCtx.arc(sourceX, sourceY, size, 0, Math.PI * 2);
+        previewCtx.stroke();
+        
+        // Линия между источником и целью
+        previewCtx.beginPath();
+        previewCtx.moveTo(sourceX, sourceY);
+        previewCtx.lineTo(point.x, point.y);
+        previewCtx.stroke();
+      }
       
-      // Линия между источником и целью
-      previewCtx.beginPath();
-      previewCtx.moveTo(sourceX, sourceY);
-      previewCtx.lineTo(point.x, point.y);
-      previewCtx.stroke();
-      
-      // Крестик на источнике
+      // Крестик на исходной точке источника
+      previewCtx.strokeStyle = '#ff6600';
       previewCtx.setLineDash([]);
       previewCtx.beginPath();
-      previewCtx.moveTo(sourceX - 8, sourceY);
-      previewCtx.lineTo(sourceX + 8, sourceY);
-      previewCtx.moveTo(sourceX, sourceY - 8);
-      previewCtx.lineTo(sourceX, sourceY + 8);
+      previewCtx.moveTo(this.sourcePoint.x - 8, this.sourcePoint.y);
+      previewCtx.lineTo(this.sourcePoint.x + 8, this.sourcePoint.y);
+      previewCtx.moveTo(this.sourcePoint.x, this.sourcePoint.y - 8);
+      previewCtx.lineTo(this.sourcePoint.x, this.sourcePoint.y + 8);
+      previewCtx.stroke();
+    } else if (this.hasSource()) {
+      // Показываем только исходную точку если ещё не начали рисовать
+      previewCtx.strokeStyle = '#ff6600';
+      previewCtx.setLineDash([]);
+      previewCtx.lineWidth = 2;
+      previewCtx.beginPath();
+      previewCtx.moveTo(this.sourcePoint.x - 10, this.sourcePoint.y);
+      previewCtx.lineTo(this.sourcePoint.x + 10, this.sourcePoint.y);
+      previewCtx.moveTo(this.sourcePoint.x, this.sourcePoint.y - 10);
+      previewCtx.lineTo(this.sourcePoint.x, this.sourcePoint.y + 10);
+      previewCtx.stroke();
+      
+      // Круг вокруг источника
+      previewCtx.setLineDash([4, 4]);
+      previewCtx.beginPath();
+      previewCtx.arc(this.sourcePoint.x, this.sourcePoint.y, size, 0, Math.PI * 2);
       previewCtx.stroke();
     }
     

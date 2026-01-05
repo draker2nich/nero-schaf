@@ -1,9 +1,5 @@
 /**
  * Инструмент "Кисть"
- * Поддерживает:
- * - Размер, жёсткость, прозрачность
- * - Давление планшета
- * - Плавные линии с интерполяцией
  */
 
 import { BaseTool } from './BaseTool';
@@ -33,7 +29,6 @@ export class BrushTool extends BaseTool {
 
     const { settings } = context;
     
-    // Интерполяция для плавных линий
     const density = settings.hardness < 50 
       ? PERFORMANCE.BRUSH_INTERPOLATION_DENSITY.SOFT 
       : PERFORMANCE.BRUSH_INTERPOLATION_DENSITY.HARD;
@@ -49,12 +44,12 @@ export class BrushTool extends BaseTool {
   }
 
   drawPoint(x, y, settings, context) {
+    if (!this.isPointInBounds(x, y)) return;
+    
     const { ctx } = context;
     const { size, color, hardness, opacity } = settings;
     
     ctx.save();
-    
-    // Применяем прозрачность
     ctx.globalAlpha = opacity / 100;
     
     const rgb = this.parseColor(color);
@@ -114,7 +109,7 @@ export class BrushTool extends BaseTool {
   }
 
   renderPreview(ctx, point, settings) {
-    const { size, color, opacity } = settings;
+    const { size, color } = settings;
     
     ctx.save();
     ctx.globalAlpha = 0.5;
