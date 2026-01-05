@@ -67,7 +67,7 @@ const FitIcon = () => (
 // === КОМПОНЕНТЫ ===
 
 const ToolButton = memo(({ id, icon: Icon, label, isActive, onClick, variant, badge }) => {
-  const baseClasses = "py-3 px-2 rounded-xl text-xs font-medium transition-all flex flex-col items-center justify-center gap-1.5 relative";
+  const baseClasses = "py-3 px-2 rounded-xl text-xs font-medium transition-all flex flex-col items-center justify-center gap-1.5 relative active:scale-95";
   const variants = {
     default: isActive
       ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
@@ -92,14 +92,13 @@ const ToolButton = memo(({ id, icon: Icon, label, isActive, onClick, variant, ba
 const ColorButton = memo(({ color, isActive, onClick }) => (
   <button
     onClick={onClick}
-    className={`w-full aspect-square rounded-lg border-2 transition-all ${
+    className={`w-full aspect-square rounded-lg border-2 transition-all active:scale-95 ${
       isActive ? 'border-blue-500 ring-2 ring-blue-200 scale-110' : 'border-gray-300 hover:border-gray-400'
     }`}
     style={{ backgroundColor: color }}
   />
 ));
 
-// Слайдер с числовым вводом
 const SliderWithInput = memo(({ label, value, onChange, min, max, unit = '' }) => {
   const [inputValue, setInputValue] = useState(value.toString());
   useEffect(() => { setInputValue(value.toString()); }, [value]);
@@ -131,31 +130,30 @@ const SliderWithInput = memo(({ label, value, onChange, min, max, unit = '' }) =
   );
 });
 
-// Панель зума
-const ZoomPanel = memo(({ zoom, onZoomIn, onZoomOut, onFitToView, onResetZoom }) => (
+// Панель зума - компактнее для мобильных
+const ZoomPanel = memo(({ zoom, onZoomIn, onZoomOut, onFitToView, onResetZoom, isMobile }) => (
   <div className="space-y-2">
     <div className="flex items-center justify-between">
       <span className="text-xs font-medium text-gray-700">Масштаб</span>
       <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">{Math.round(zoom * 100)}%</span>
     </div>
     <div className="flex gap-1">
-      <button onClick={onZoomOut} disabled={zoom <= CANVAS_ZOOM.MIN} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 rounded-lg transition-colors flex items-center justify-center" title="Уменьшить">
+      <button onClick={onZoomOut} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-lg transition-colors flex items-center justify-center" title="Уменьшить">
         <ZoomOutIcon />
       </button>
-      <button onClick={onResetZoom} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-xs font-medium" title="100%">
+      <button onClick={onResetZoom} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-lg transition-colors text-xs font-medium" title="100%">
         100%
       </button>
-      <button onClick={onZoomIn} disabled={zoom >= CANVAS_ZOOM.MAX} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 rounded-lg transition-colors flex items-center justify-center" title="Увеличить">
+      <button onClick={onZoomIn} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-lg transition-colors flex items-center justify-center" title="Увеличить">
         <ZoomInIcon />
       </button>
-      <button onClick={onFitToView} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center justify-center" title="По размеру">
+      <button onClick={onFitToView} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 active:bg-gray-300 rounded-lg transition-colors flex items-center justify-center" title="По размеру">
         <FitIcon />
       </button>
     </div>
   </div>
 ));
 
-// Превью кисти
 const BrushPreview = memo(({ size, hardness, opacity, color, isEraser }) => {
   const previewDataUrl = useMemo(() => generateBrushPreview(64, hardness, isEraser ? '#666666' : color), [hardness, color, isEraser]);
   return (
@@ -173,7 +171,6 @@ const BrushPreview = memo(({ size, hardness, opacity, color, isEraser }) => {
   );
 });
 
-// Color Picker
 const FullColorPicker = memo(({ color, onChange }) => {
   const inputRef = useRef(null);
   const [localColor, setLocalColor] = useState(color);
@@ -191,8 +188,7 @@ const FullColorPicker = memo(({ color, onChange }) => {
   );
 });
 
-// Настройки штампа
-const StampSettings = memo(({ hasSource, sourcePoint }) => (
+const StampSettings = memo(({ hasSource, sourcePoint, isMobile }) => (
   <div className={`p-3 rounded-lg border ${hasSource ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
     <div className="flex items-center gap-2">
       <span className={`text-lg ${hasSource ? 'text-green-500' : 'text-yellow-500'}`}>
@@ -205,7 +201,7 @@ const StampSettings = memo(({ hasSource, sourcePoint }) => (
         <p className="text-xs text-gray-500">
           {hasSource 
             ? `Позиция: ${Math.round(sourcePoint?.x || 0)}, ${Math.round(sourcePoint?.y || 0)}`
-            : 'Alt+Click на холсте для выбора области'}
+            : isMobile ? 'Долгое нажатие на холсте' : 'Alt+Click на холсте'}
         </p>
       </div>
     </div>
@@ -226,7 +222,7 @@ function ToolbarWithLayers({
   stampSourceSet, stampSourcePoint
 }) {
   const fileInputRef = useRef(null);
-  const [showBrushSettings, setShowBrushSettings] = useState(true);
+  const [showBrushSettings, setShowBrushSettings] = useState(!isMobile);
   const [showColors, setShowColors] = useState(false);
 
   const tools = [
@@ -235,7 +231,6 @@ function ToolbarWithLayers({
     { id: TOOLS.STAMP, icon: StampIcon, label: 'Штамп' }
   ];
 
-  // Режим трансформации изображения
   if (isTransformMode) {
     return (
       <div className="p-4 space-y-4">
@@ -251,8 +246,8 @@ function ToolbarWithLayers({
         <SliderWithInput label="Масштаб" value={Math.round(imageTransform.scale * 100)} onChange={(v) => setImageTransform(prev => ({ ...prev, scale: v / 100 }))} min={10} max={300} unit="%" />
         <SliderWithInput label="Поворот" value={imageTransform.rotation} onChange={(v) => setImageTransform(prev => ({ ...prev, rotation: v }))} min={0} max={360} unit="°" />
         <div className="space-y-2">
-          <button onClick={onApplyImage} className="w-full py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm font-semibold">✓ Применить</button>
-          <button onClick={onCancelImage} className="w-full py-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">✕ Отменить</button>
+          <button onClick={onApplyImage} className="w-full py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 active:bg-green-700 text-sm font-semibold">✓ Применить</button>
+          <button onClick={onCancelImage} className="w-full py-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 active:bg-gray-100 text-sm font-semibold">✕ Отменить</button>
         </div>
       </div>
     );
@@ -260,20 +255,17 @@ function ToolbarWithLayers({
 
   return (
     <div className="p-4 space-y-4">
-      {/* Слои */}
       <LayersPanel layers={layers} activeLayerId={activeLayerId} onSelectLayer={onSelectLayer} onToggleVisibility={onToggleLayerVisibility} onMoveUp={onMoveLayerUp} onMoveDown={onMoveLayerDown} onDelete={onDeleteLayer} onAddDrawingLayer={onAddDrawingLayer} onClearLayer={onClearLayer} onClearAll={onClearAll} />
       
       <div className="border-t border-gray-200" />
       
-      {/* Зум */}
       {viewport && (
         <>
-          <ZoomPanel zoom={viewport.zoom} onZoomIn={onZoomIn} onZoomOut={onZoomOut} onFitToView={onFitToView} onResetZoom={onResetZoom} />
+          <ZoomPanel zoom={viewport.zoom} onZoomIn={onZoomIn} onZoomOut={onZoomOut} onFitToView={onFitToView} onResetZoom={onResetZoom} isMobile={isMobile} />
           <div className="border-t border-gray-200" />
         </>
       )}
       
-      {/* Инструменты рисования */}
       <div>
         <h3 className="text-sm font-semibold text-gray-900 mb-2">Инструменты</h3>
         <div className="grid grid-cols-3 gap-2">
@@ -283,7 +275,6 @@ function ToolbarWithLayers({
         </div>
       </div>
 
-      {/* Добавить изображение */}
       <div className="grid grid-cols-2 gap-2">
         <ToolButton id="image" icon={ImageIcon} label="Загрузить" onClick={() => fileInputRef.current?.click()} />
         <ToolButton id="ai" icon={SparklesIcon} label="AI" onClick={onAIGenerate} variant="ai" />
@@ -292,12 +283,10 @@ function ToolbarWithLayers({
 
       <div className="border-t border-gray-200" />
 
-      {/* Настройки штампа */}
       {tool === TOOLS.STAMP && (
-        <StampSettings hasSource={stampSourceSet} sourcePoint={stampSourcePoint} />
+        <StampSettings hasSource={stampSourceSet} sourcePoint={stampSourcePoint} isMobile={isMobile} />
       )}
 
-      {/* Настройки кисти */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-gray-900">
@@ -310,7 +299,9 @@ function ToolbarWithLayers({
         
         {showBrushSettings && (
           <div className="space-y-3">
-            <BrushPreview size={brushSize} hardness={brushHardness} opacity={brushOpacity || 100} color={brushColor} isEraser={tool === TOOLS.ERASE} />
+            {!isMobile && (
+              <BrushPreview size={brushSize} hardness={brushHardness} opacity={brushOpacity || 100} color={brushColor} isEraser={tool === TOOLS.ERASE} />
+            )}
             
             <SliderWithInput label="Размер" value={brushSize} onChange={setBrushSize} min={1} max={150} unit="px" />
             <SliderWithInput label="Жёсткость" value={brushHardness} onChange={setBrushHardness} min={0} max={100} unit="%" />
@@ -338,12 +329,11 @@ function ToolbarWithLayers({
 
       <div className="border-t border-gray-200" />
 
-      {/* Undo/Redo */}
       <div className="grid grid-cols-2 gap-2">
-        <button onClick={onUndo} disabled={!canUndo} className="py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2 text-sm">
+        <button onClick={onUndo} disabled={!canUndo} className="py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 active:bg-gray-300 disabled:opacity-50 flex items-center justify-center gap-2 text-sm">
           <UndoIcon /> Отменить
         </button>
-        <button onClick={onRedo} disabled={!canRedo} className="py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 flex items-center justify-center gap-2 text-sm">
+        <button onClick={onRedo} disabled={!canRedo} className="py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 active:bg-gray-300 disabled:opacity-50 flex items-center justify-center gap-2 text-sm">
           <RedoIcon /> Повторить
         </button>
       </div>

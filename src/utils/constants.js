@@ -23,9 +23,9 @@ export const MAX_HISTORY = isMobile ? 10 : 20;
 export const TOOLS = {
   DRAW: 'draw',
   ERASE: 'erase',
-  STAMP: 'stamp',      // Новый: штамп
+  STAMP: 'stamp',
   IMAGE: 'image',
-  PAN: 'pan'           // Новый: панорамирование
+  PAN: 'pan'
 };
 
 // Настройки размера кисти
@@ -47,25 +47,25 @@ export const BRUSH_HARDNESS = {
   }
 };
 
-// Настройки прозрачности кисти (НОВОЕ)
+// Настройки прозрачности кисти
 export const BRUSH_OPACITY = {
   MIN: 1,
   MAX: 100,
   DEFAULT: 100
 };
 
-// Настройки давления для планшетов (НОВОЕ)
+// Настройки давления для планшетов
 export const PRESSURE_SETTINGS = {
   ENABLED: true,
-  MIN_SIZE_MULTIPLIER: 0.1,    // Минимальный размер при нулевом давлении
-  MAX_SIZE_MULTIPLIER: 1.0,    // Максимальный размер при полном давлении
-  MIN_OPACITY_MULTIPLIER: 0.2, // Минимальная прозрачность при нулевом давлении
-  MAX_OPACITY_MULTIPLIER: 1.0, // Максимальная прозрачность при полном давлении
-  AFFECTS_SIZE: true,          // Давление влияет на размер
-  AFFECTS_OPACITY: true        // Давление влияет на прозрачность
+  MIN_SIZE_MULTIPLIER: 0.1,
+  MAX_SIZE_MULTIPLIER: 1.0,
+  MIN_OPACITY_MULTIPLIER: 0.2,
+  MAX_OPACITY_MULTIPLIER: 1.0,
+  AFFECTS_SIZE: true,
+  AFFECTS_OPACITY: true
 };
 
-// Настройки штампа (НОВОЕ)
+// Настройки штампа
 export const STAMP_SETTINGS = {
   MIN_SIZE: 10,
   MAX_SIZE: 200,
@@ -73,21 +73,21 @@ export const STAMP_SETTINGS = {
   PREVIEW_OPACITY: 0.5
 };
 
-// Настройки зума холста (НОВОЕ)
+// Настройки зума холста - расширенные для мобильных
 export const CANVAS_ZOOM = {
-  MIN: 0.25,      // 25%
-  MAX: 8.0,       // 800%
-  DEFAULT: 1.0,   // 100%
-  STEP: 0.1,      // Шаг при колёсике мыши
-  FIT_PADDING: 20 // Отступ при "Fit to view"
+  MIN: isMobile ? 0.2 : 0.25,
+  MAX: isMobile ? 5.0 : 8.0,
+  DEFAULT: 1.0,
+  STEP: isMobile ? 0.15 : 0.1,
+  FIT_PADDING: isMobile ? 8 : 20
 };
 
 // Настройки производительности
 export const PERFORMANCE = {
-  POINTER_THROTTLE_MS: isMobile ? 32 : 16,
+  POINTER_THROTTLE_MS: isMobile ? 24 : 16,
   TEXTURE_UPDATE_MS: isMobile ? 100 : 50,
-  MIN_DRAW_DISTANCE: isMobile ? 5 : 3,
-  TRANSFORM_THROTTLE_MS: isMobile ? 50 : 32,
+  MIN_DRAW_DISTANCE: isMobile ? 4 : 3,
+  TRANSFORM_THROTTLE_MS: isMobile ? 40 : 32,
   BRUSH_INTERPOLATION_DENSITY: {
     SOFT: 0.15,
     HARD: 0.25

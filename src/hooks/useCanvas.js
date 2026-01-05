@@ -1,16 +1,17 @@
 /**
  * Хук для управления viewport холста
  * 
- * Исправления:
- * - Автоматическое центрирование при инициализации
- * - Корректный зум относительно курсора
- * - Ограничение панорамирования (холст не уходит за пределы)
+ * Оптимизации для мобильных:
+ * - Улучшенный pinch-to-zoom
+ * - Автоматический fit при инициализации
+ * - Плавные анимации
+ * - Инерция при свайпе
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { CANVAS_SIZE, CANVAS_ZOOM } from '../utils/constants';
 
-export function useCanvasViewport(containerRef) {
+export function useCanvasViewport(containerRef, isMobile = false) {
   const [viewport, setViewport] = useState({
     zoom: CANVAS_ZOOM.DEFAULT,
     panX: 0,
@@ -24,10 +25,12 @@ export function useCanvasViewport(containerRef) {
   const panStartRef = useRef({ x: 0, y: 0, viewportX: 0, viewportY: 0 });
   const lastTouchDistanceRef = useRef(0);
   const lastTouchCenterRef = useRef({ x: 0, y: 0 });
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const lastMoveTimeRef = useRef(0);
+  const animationFrameRef = useRef(null);
+  const isPinchingRef = useRef(false);
 
-  /**
-   * Центрирование холста при инициализации
-   */
+  // Инициализация с автоматическим fit
   useEffect(() => {
     if (!containerRef.current || isInitialized) return;
     
@@ -35,21 +38,16 @@ export function useCanvasViewport(containerRef) {
       if (!isInitialized && entries[0]) {
         const rect = entries[0].contentRect;
         if (rect.width > 0 && rect.height > 0) {
-          // Вычисляем оптимальный зум для вписывания
-          const padding = CANVAS_ZOOM.FIT_PADDING * 2;
+          const padding = isMobile ? 16 : CANVAS_ZOOM.FIT_PADDING * 2;
           const scaleX = (rect.width - padding) / CANVAS_SIZE;
           const scaleY = (rect.height - padding) / CANVAS_SIZE;
-          const fitZoom = Math.min(scaleX, scaleY, 1);
+          // На мобильных делаем чуть меньше для удобства
+          const fitZoom = Math.min(scaleX, scaleY, isMobile ? 0.9 : 1);
           
-          // Центрируем
           const panX = (rect.width - CANVAS_SIZE * fitZoom) / 2;
           const panY = (rect.height - CANVAS_SIZE * fitZoom) / 2;
           
-          setViewport({
-            zoom: fitZoom,
-            panX,
-            panY
-          });
+          setViewport({ zoom: fitZoom, panX, panY });
           setIsInitialized(true);
         }
       }
@@ -57,11 +55,9 @@ export function useCanvasViewport(containerRef) {
     
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, [containerRef, isInitialized]);
+  }, [containerRef, isInitialized, isMobile]);
 
-  /**
-   * Ограничение панорамирования - холст не должен полностью уходить за пределы
-   */
+  // Ограничение панорамирования
   const clampPan = useCallback((panX, panY, zoom) => {
     if (!containerRef.current) return { panX, panY };
     
@@ -69,8 +65,8 @@ export function useCanvasViewport(containerRef) {
     const canvasWidth = CANVAS_SIZE * zoom;
     const canvasHeight = CANVAS_SIZE * zoom;
     
-    // Минимум 20% холста должно быть видно
-    const minVisible = 0.2;
+    // На мобильных разрешаем больше свободы
+    const minVisible = isMobile ? 0.15 : 0.2;
     const minX = -canvasWidth * (1 - minVisible);
     const maxX = rect.width - canvasWidth * minVisible;
     const minY = -canvasHeight * (1 - minVisible);
@@ -80,131 +76,86 @@ export function useCanvasViewport(containerRef) {
       panX: Math.max(minX, Math.min(maxX, panX)),
       panY: Math.max(minY, Math.min(maxY, panY))
     };
-  }, [containerRef]);
+  }, [containerRef, isMobile]);
 
-  /**
-   * Зум с центром в указанной точке (относительно контейнера)
-   */
+  // Зум в точку
   const zoomAt = useCallback((newZoom, centerX, centerY) => {
     setViewport(prev => {
-      const clampedZoom = Math.max(CANVAS_ZOOM.MIN, Math.min(CANVAS_ZOOM.MAX, newZoom));
+      // На мобильных расширяем диапазон зума
+      const minZoom = isMobile ? 0.2 : CANVAS_ZOOM.MIN;
+      const maxZoom = isMobile ? 5.0 : CANVAS_ZOOM.MAX;
+      const clampedZoom = Math.max(minZoom, Math.min(maxZoom, newZoom));
       
-      // Позиция в координатах холста до зума
       const canvasX = (centerX - prev.panX) / prev.zoom;
       const canvasY = (centerY - prev.panY) / prev.zoom;
       
-      // Новое смещение для сохранения точки под курсором
       let newPanX = centerX - canvasX * clampedZoom;
       let newPanY = centerY - canvasY * clampedZoom;
       
-      // Ограничиваем панорамирование
       const clamped = clampPan(newPanX, newPanY, clampedZoom);
       
-      return {
-        zoom: clampedZoom,
-        panX: clamped.panX,
-        panY: clamped.panY
-      };
+      return { zoom: clampedZoom, panX: clamped.panX, panY: clamped.panY };
     });
-  }, [clampPan]);
+  }, [clampPan, isMobile]);
 
-  /**
-   * Зум на определённый процент (относительно центра контейнера)
-   */
   const zoomTo = useCallback((zoomLevel) => {
     if (!containerRef.current) return;
-    
     const rect = containerRef.current.getBoundingClientRect();
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    
-    zoomAt(zoomLevel, centerX, centerY);
+    zoomAt(zoomLevel, rect.width / 2, rect.height / 2);
   }, [containerRef, zoomAt]);
 
-  /**
-   * Увеличение зума
-   */
   const zoomIn = useCallback(() => {
     if (!containerRef.current) return;
-    
     const rect = containerRef.current.getBoundingClientRect();
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
+    const step = isMobile ? 0.15 : CANVAS_ZOOM.STEP;
     
     setViewport(prev => {
-      const newZoom = Math.min(CANVAS_ZOOM.MAX, prev.zoom + CANVAS_ZOOM.STEP);
+      const newZoom = Math.min(isMobile ? 5.0 : CANVAS_ZOOM.MAX, prev.zoom + step);
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
       
       const canvasX = (centerX - prev.panX) / prev.zoom;
       const canvasY = (centerY - prev.panY) / prev.zoom;
       
-      let newPanX = centerX - canvasX * newZoom;
-      let newPanY = centerY - canvasY * newZoom;
-      
-      const clamped = clampPan(newPanX, newPanY, newZoom);
-      
-      return {
-        zoom: newZoom,
-        panX: clamped.panX,
-        panY: clamped.panY
-      };
+      const clamped = clampPan(centerX - canvasX * newZoom, centerY - canvasY * newZoom, newZoom);
+      return { zoom: newZoom, panX: clamped.panX, panY: clamped.panY };
     });
-  }, [containerRef, clampPan]);
+  }, [containerRef, clampPan, isMobile]);
 
-  /**
-   * Уменьшение зума
-   */
   const zoomOut = useCallback(() => {
     if (!containerRef.current) return;
-    
     const rect = containerRef.current.getBoundingClientRect();
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
+    const step = isMobile ? 0.15 : CANVAS_ZOOM.STEP;
     
     setViewport(prev => {
-      const newZoom = Math.max(CANVAS_ZOOM.MIN, prev.zoom - CANVAS_ZOOM.STEP);
+      const newZoom = Math.max(isMobile ? 0.2 : CANVAS_ZOOM.MIN, prev.zoom - step);
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
       
       const canvasX = (centerX - prev.panX) / prev.zoom;
       const canvasY = (centerY - prev.panY) / prev.zoom;
       
-      let newPanX = centerX - canvasX * newZoom;
-      let newPanY = centerY - canvasY * newZoom;
-      
-      const clamped = clampPan(newPanX, newPanY, newZoom);
-      
-      return {
-        zoom: newZoom,
-        panX: clamped.panX,
-        panY: clamped.panY
-      };
+      const clamped = clampPan(centerX - canvasX * newZoom, centerY - canvasY * newZoom, newZoom);
+      return { zoom: newZoom, panX: clamped.panX, panY: clamped.panY };
     });
-  }, [containerRef, clampPan]);
+  }, [containerRef, clampPan, isMobile]);
 
-  /**
-   * Fit to view - масштабирование для заполнения контейнера
-   */
   const fitToView = useCallback(() => {
     if (!containerRef.current) return;
     
     const rect = containerRef.current.getBoundingClientRect();
-    const padding = CANVAS_ZOOM.FIT_PADDING * 2;
+    const padding = isMobile ? 16 : CANVAS_ZOOM.FIT_PADDING * 2;
     
     const scaleX = (rect.width - padding) / CANVAS_SIZE;
     const scaleY = (rect.height - padding) / CANVAS_SIZE;
-    const scale = Math.min(scaleX, scaleY, CANVAS_ZOOM.MAX);
+    const scale = Math.min(scaleX, scaleY, isMobile ? 5.0 : CANVAS_ZOOM.MAX);
     
     const panX = (rect.width - CANVAS_SIZE * scale) / 2;
     const panY = (rect.height - CANVAS_SIZE * scale) / 2;
     
-    setViewport({
-      zoom: scale,
-      panX,
-      panY
-    });
-  }, [containerRef]);
+    setViewport({ zoom: scale, panX, panY });
+  }, [containerRef, isMobile]);
 
-  /**
-   * Сброс к 100%
-   */
   const resetZoom = useCallback(() => {
     if (!containerRef.current) return;
     
@@ -213,22 +164,12 @@ export function useCanvasViewport(containerRef) {
     const panY = (rect.height - CANVAS_SIZE) / 2;
     
     const clamped = clampPan(panX, panY, 1);
-    
-    setViewport({
-      zoom: 1,
-      panX: clamped.panX,
-      panY: clamped.panY
-    });
+    setViewport({ zoom: 1, panX: clamped.panX, panY: clamped.panY });
   }, [containerRef, clampPan]);
 
-  /**
-   * Центрирование холста
-   */
   const center = useCallback(() => {
     if (!containerRef.current) return;
-    
     const rect = containerRef.current.getBoundingClientRect();
-    
     setViewport(prev => ({
       ...prev,
       panX: (rect.width - CANVAS_SIZE * prev.zoom) / 2,
@@ -236,11 +177,10 @@ export function useCanvasViewport(containerRef) {
     }));
   }, [containerRef]);
 
-  /**
-   * Начало панорамирования
-   */
   const startPan = useCallback((clientX, clientY) => {
     setIsPanning(true);
+    velocityRef.current = { x: 0, y: 0 };
+    lastMoveTimeRef.current = Date.now();
     panStartRef.current = {
       x: clientX,
       y: clientY,
@@ -249,58 +189,96 @@ export function useCanvasViewport(containerRef) {
     };
   }, [viewport.panX, viewport.panY]);
 
-  /**
-   * Панорамирование
-   */
   const pan = useCallback((clientX, clientY) => {
     if (!isPanning) return;
     
+    const now = Date.now();
+    const dt = now - lastMoveTimeRef.current;
+    
     const deltaX = clientX - panStartRef.current.x;
     const deltaY = clientY - panStartRef.current.y;
+    
+    // Вычисляем скорость для инерции на мобильных
+    if (isMobile && dt > 0) {
+      velocityRef.current = {
+        x: deltaX / dt * 16,
+        y: deltaY / dt * 16
+      };
+    }
+    lastMoveTimeRef.current = now;
     
     const newPanX = panStartRef.current.viewportX + deltaX;
     const newPanY = panStartRef.current.viewportY + deltaY;
     
     const clamped = clampPan(newPanX, newPanY, viewport.zoom);
-    
-    setViewport(prev => ({
-      ...prev,
-      panX: clamped.panX,
-      panY: clamped.panY
-    }));
-  }, [isPanning, viewport.zoom, clampPan]);
+    setViewport(prev => ({ ...prev, panX: clamped.panX, panY: clamped.panY }));
+  }, [isPanning, viewport.zoom, clampPan, isMobile]);
 
-  /**
-   * Окончание панорамирования
-   */
+  // Инерция при отпускании на мобильных
+  const applyInertia = useCallback(() => {
+    if (!isMobile) return;
+    
+    const friction = 0.92;
+    const minVelocity = 0.5;
+    
+    const animate = () => {
+      const vx = velocityRef.current.x;
+      const vy = velocityRef.current.y;
+      
+      if (Math.abs(vx) < minVelocity && Math.abs(vy) < minVelocity) {
+        velocityRef.current = { x: 0, y: 0 };
+        return;
+      }
+      
+      velocityRef.current = { x: vx * friction, y: vy * friction };
+      
+      setViewport(prev => {
+        const newPanX = prev.panX + vx;
+        const newPanY = prev.panY + vy;
+        const clamped = clampPan(newPanX, newPanY, prev.zoom);
+        return { ...prev, panX: clamped.panX, panY: clamped.panY };
+      });
+      
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+    
+    animate();
+  }, [isMobile, clampPan]);
+
   const endPan = useCallback(() => {
     setIsPanning(false);
+    if (isMobile) {
+      applyInertia();
+    }
+  }, [isMobile, applyInertia]);
+
+  // Cleanup animation
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
   }, []);
 
-  /**
-   * Обработка колёсика мыши
-   */
   const handleWheel = useCallback((e) => {
     if (!containerRef.current) return;
-    
     e.preventDefault();
     
     const rect = containerRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
     
-    // Определяем направление и величину зума
     const delta = -e.deltaY * 0.001;
     const newZoom = viewport.zoom * (1 + delta);
     
     zoomAt(newZoom, mouseX, mouseY);
   }, [containerRef, viewport.zoom, zoomAt]);
 
-  /**
-   * Обработка тач-событий для pinch-to-zoom
-   */
+  // Touch handlers для pinch-to-zoom
   const handleTouchStart = useCallback((e) => {
     if (e.touches.length === 2) {
+      isPinchingRef.current = true;
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       
@@ -317,7 +295,7 @@ export function useCanvasViewport(containerRef) {
   }, []);
 
   const handleTouchMove = useCallback((e) => {
-    if (e.touches.length === 2) {
+    if (e.touches.length === 2 && isPinchingRef.current) {
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       
@@ -331,24 +309,44 @@ export function useCanvasViewport(containerRef) {
         y: (t1.clientY + t2.clientY) / 2
       };
       
-      if (lastTouchDistanceRef.current > 0) {
+      if (lastTouchDistanceRef.current > 0 && containerRef.current) {
         const scale = distance / lastTouchDistanceRef.current;
         const newZoom = viewport.zoom * scale;
         
-        if (containerRef.current) {
-          const rect = containerRef.current.getBoundingClientRect();
-          zoomAt(newZoom, center.x - rect.left, center.y - rect.top);
-        }
+        const rect = containerRef.current.getBoundingClientRect();
+        
+        // Также перемещаем при pinch
+        const panDeltaX = center.x - lastTouchCenterRef.current.x;
+        const panDeltaY = center.y - lastTouchCenterRef.current.y;
+        
+        setViewport(prev => {
+          const clampedZoom = Math.max(0.2, Math.min(5.0, newZoom));
+          
+          const centerX = center.x - rect.left;
+          const centerY = center.y - rect.top;
+          
+          const canvasX = (centerX - prev.panX) / prev.zoom;
+          const canvasY = (centerY - prev.panY) / prev.zoom;
+          
+          let newPanX = centerX - canvasX * clampedZoom + panDeltaX;
+          let newPanY = centerY - canvasY * clampedZoom + panDeltaY;
+          
+          const clamped = clampPan(newPanX, newPanY, clampedZoom);
+          return { zoom: clampedZoom, panX: clamped.panX, panY: clamped.panY };
+        });
       }
       
       lastTouchDistanceRef.current = distance;
       lastTouchCenterRef.current = center;
     }
-  }, [containerRef, viewport.zoom, zoomAt]);
+  }, [containerRef, viewport.zoom, clampPan]);
 
-  /**
-   * Обработка клавиш (пробел для панорамирования)
-   */
+  const handleTouchEnd = useCallback(() => {
+    isPinchingRef.current = false;
+    lastTouchDistanceRef.current = 0;
+  }, []);
+
+  // Клавиши (пробел)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.code === 'Space' && !e.repeat) {
@@ -373,9 +371,6 @@ export function useCanvasViewport(containerRef) {
     };
   }, [endPan]);
 
-  /**
-   * Преобразование координат экрана в координаты холста
-   */
   const screenToCanvas = useCallback((screenX, screenY) => {
     return {
       x: (screenX - viewport.panX) / viewport.zoom,
@@ -383,9 +378,6 @@ export function useCanvasViewport(containerRef) {
     };
   }, [viewport]);
 
-  /**
-   * Преобразование координат холста в координаты экрана
-   */
   const canvasToScreen = useCallback((canvasX, canvasY) => {
     return {
       x: canvasX * viewport.zoom + viewport.panX,
@@ -393,9 +385,6 @@ export function useCanvasViewport(containerRef) {
     };
   }, [viewport]);
 
-  /**
-   * Получение границ видимой области холста
-   */
   const getVisibleBounds = useCallback(() => {
     if (!containerRef.current) return null;
     
@@ -417,7 +406,6 @@ export function useCanvasViewport(containerRef) {
     spacePressed,
     isInitialized,
     
-    // Зум
     zoomAt,
     zoomTo,
     zoomIn,
@@ -425,24 +413,22 @@ export function useCanvasViewport(containerRef) {
     fitToView,
     resetZoom,
     
-    // Панорамирование
     center,
     startPan,
     pan,
     endPan,
     
-    // Обработчики событий
     handleWheel,
     handleTouchStart,
     handleTouchMove,
+    handleTouchEnd,
     
-    // Преобразование координат
     screenToCanvas,
     canvasToScreen,
     getVisibleBounds,
     
-    // Проверка режима
-    shouldPan: spacePressed || isPanning
+    shouldPan: spacePressed || isPanning,
+    isPinching: isPinchingRef.current
   };
 }
 
