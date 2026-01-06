@@ -1,10 +1,5 @@
 /**
- * Хук для рисования с поддержкой штампа
- * 
- * Исправления:
- * - Корректная передача compositeCanvas и layers в штамп
- * - Передача UV-маски
- * - UV-маска применяется и к штампу
+ * Хук для рисования с поддержкой векторных данных и штампа
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -16,9 +11,6 @@ import { LAYER_TYPES } from './useLayers';
 // Глобальный кэш UV-маски
 let uvMaskDataCache = null;
 
-/**
- * Получение кэша UV-маски
- */
 export function getUVMaskCache() {
   return uvMaskDataCache;
 }
@@ -44,6 +36,9 @@ export function useDrawingWithTools(
   const initializedRef = useRef(false);
   const layersRef = useRef(null);
   
+  // Для текущего штриха
+  const currentStrokeRef = useRef(null);
+  
   const onCanvasUpdateRef = useRef(onCanvasUpdate);
   const getLayersRef = useRef(getLayers);
   const getCompositeCanvasRef = useRef(getCompositeCanvas);
@@ -58,7 +53,6 @@ export function useDrawingWithTools(
       initializedRef.current = true;
       initUVMaskCache(uvLayoutImage);
       
-      // Кэшируем данные UV-маски для штампа
       const canvas = document.createElement('canvas');
       canvas.width = CANVAS_SIZE;
       canvas.height = CANVAS_SIZE;
@@ -68,16 +62,10 @@ export function useDrawingWithTools(
     }
   }, [uvLayoutImage]);
 
-  /**
-   * Обновление ссылки на слои
-   */
   const updateLayersRef = useCallback((layers) => {
     layersRef.current = layers;
   }, []);
 
-  /**
-   * Выбор инструмента
-   */
   const selectTool = useCallback((toolId) => {
     toolManager.select(toolId, {});
     setCurrentTool(toolId);
@@ -88,9 +76,6 @@ export function useDrawingWithTools(
     }
   }, []);
 
-  /**
-   * Установка источника штампа
-   */
   const setStampSource = useCallback((x, y, compositeCanvas) => {
     const stampTool = toolManager.get(TOOLS.STAMP);
     if (stampTool) {
@@ -108,29 +93,16 @@ export function useDrawingWithTools(
     return false;
   }, []);
 
-  /**
-   * Извлечение давления из события
-   */
   const getPressure = useCallback((e) => {
-    if (e.pressure !== undefined && e.pressure > 0) {
-      return e.pressure;
-    }
-    if (e.touches?.[0]?.force) {
-      return e.touches[0].force;
-    }
+    if (e.pressure !== undefined && e.pressure > 0) return e.pressure;
+    if (e.touches?.[0]?.force) return e.touches[0].force;
     return 1.0;
   }, []);
 
-  /**
-   * Определение touch события
-   */
   const isTouch = useCallback((e) => {
     return e.touches !== undefined || e.pointerType === 'touch';
   }, []);
 
-  /**
-   * Преобразование события в точку с учётом viewport
-   */
   const eventToPoint = useCallback((e, canvasRect) => {
     const touch = e.touches?.[0] || e.changedTouches?.[0];
     const clientX = touch ? touch.clientX : e.clientX;
@@ -155,9 +127,6 @@ export function useDrawingWithTools(
     };
   }, [screenToCanvas, getPressure]);
 
-  /**
-   * Получение контекста для штампа
-   */
   const getStampContext = useCallback((e, compositeCanvas) => {
     const layers = getLayersRef.current ? getLayersRef.current() : layersRef.current;
     const composite = compositeCanvas || (getCompositeCanvasRef.current ? getCompositeCanvasRef.current() : null);
@@ -177,7 +146,7 @@ export function useDrawingWithTools(
   }, [isTouch]);
 
   /**
-   * Начало рисования
+   * Начало рисования - создаёт векторный штрих
    */
   const startDrawing = useCallback((e, canvasRect, settings, compositeCanvas) => {
     const point = eventToPoint(e, canvasRect);
@@ -185,10 +154,9 @@ export function useDrawingWithTools(
     const tool = toolManager.getCurrent();
     const toolId = toolManager.getCurrentId();
     
-    // Контекст для штампа
     const stampContext = getStampContext(e, compositeCanvas);
     
-    // Проверка Alt+Click для штампа
+    // Alt+Click для штампа
     if (toolId === TOOLS.STAMP && e.altKey) {
       setStampSource(point.x, point.y, compositeCanvas);
       return;
@@ -221,7 +189,20 @@ export function useDrawingWithTools(
     const layer = currentDrawingLayerRef.current;
     if (!layer || !layer.ctx) return;
     
-    // Полный контекст для инструмента
+    // Создаём векторный штрих для кисти и ластика
+    if ((toolId === TOOLS.DRAW || toolId === TOOLS.ERASE) && layer.vectorStrokes) {
+      currentStrokeRef.current = layer.vectorStrokes.beginStroke({
+        tool: toolId,
+        color: settings.brushColor || settings.color,
+        size: settings.brushSize || settings.size,
+        hardness: settings.brushHardness ?? settings.hardness ?? 80,
+        opacity: settings.brushOpacity ?? settings.opacity ?? 100
+      });
+      
+      // Добавляем первую точку
+      layer.vectorStrokes.addPoint(point.x, point.y, point.pressure);
+    }
+    
     const context = {
       layer,
       canvas: layer.canvas,
@@ -236,36 +217,29 @@ export function useDrawingWithTools(
       ...stampContext
     };
     
-    // Вызов обработчика инструмента
     const result = tool?.onPointerDown(point, context);
     
-    // Если штамп установил источник
     if (result?.sourceSet) {
       setStampSourceSet(true);
       if (onCanvasUpdateRef.current) onCanvasUpdateRef.current(true);
       return;
     }
     
-    // Проверка на необходимость установки источника штампа
-    if (result?.needSource) {
-      return;
-    }
+    if (result?.needSource) return;
     
     setIsDrawing(true);
     isDrawingRef.current = true;
     
-    // Применяем UV маску для кисти и штампа
+    // Применяем UV маску
     if ((toolId === TOOLS.DRAW || toolId === TOOLS.STAMP) && uvLayoutImage && layer.canvas) {
       applyUVMask(layer.canvas, uvLayoutImage);
     }
     
-    if (onCanvasUpdateRef.current) {
-      onCanvasUpdateRef.current();
-    }
+    if (onCanvasUpdateRef.current) onCanvasUpdateRef.current();
   }, [eventToPoint, getActiveLayer, addDrawingLayer, uvLayoutImage, setStampSource, getStampContext]);
 
   /**
-   * Продолжение рисования
+   * Продолжение рисования - добавляет точки в векторный штрих
    */
   const continueDrawing = useCallback((e, canvasRect, settings, compositeCanvas) => {
     if (!isDrawingRef.current) return;
@@ -276,6 +250,11 @@ export function useDrawingWithTools(
     const toolId = toolManager.getCurrentId();
     
     if (!layer || !layer.ctx || !tool) return;
+    
+    // Добавляем точку в векторный штрих
+    if ((toolId === TOOLS.DRAW || toolId === TOOLS.ERASE) && layer.vectorStrokes && currentStrokeRef.current) {
+      layer.vectorStrokes.addPoint(point.x, point.y, point.pressure);
+    }
     
     const stampContext = getStampContext(e, compositeCanvas);
     
@@ -295,22 +274,20 @@ export function useDrawingWithTools(
     
     tool.onPointerMove(point, context);
     
-    // Применяем UV маску для кисти и штампа
     if ((toolId === TOOLS.DRAW || toolId === TOOLS.STAMP) && uvLayoutImage && layer.canvas) {
       applyUVMask(layer.canvas, uvLayoutImage);
     }
     
-    if (onCanvasUpdateRef.current) {
-      onCanvasUpdateRef.current();
-    }
+    if (onCanvasUpdateRef.current) onCanvasUpdateRef.current();
   }, [eventToPoint, uvLayoutImage, getStampContext]);
 
   /**
-   * Окончание рисования
+   * Окончание рисования - завершает векторный штрих
    */
   const stopDrawing = useCallback((e, canvasRect) => {
     const tool = toolManager.getCurrent();
     const layer = currentDrawingLayerRef.current;
+    const toolId = toolManager.getCurrentId();
     
     if (tool) {
       const point = e && canvasRect ? eventToPoint(e, canvasRect) : { x: 0, y: 0 };
@@ -321,19 +298,19 @@ export function useDrawingWithTools(
       });
     }
     
+    // Завершаем векторный штрих
+    if ((toolId === TOOLS.DRAW || toolId === TOOLS.ERASE) && layer?.vectorStrokes) {
+      layer.vectorStrokes.endStroke();
+      currentStrokeRef.current = null;
+    }
+    
     // Инвалидируем кэш штампа после рисования
     const stampTool = toolManager.get(TOOLS.STAMP);
-    if (stampTool) {
-      stampTool.invalidateCache();
-    }
+    if (stampTool) stampTool.invalidateCache();
     
-    if (isDrawingRef.current && saveToHistory) {
-      saveToHistory();
-    }
+    if (isDrawingRef.current && saveToHistory) saveToHistory();
     
-    if (onCanvasUpdateRef.current) {
-      onCanvasUpdateRef.current(true);
-    }
+    if (onCanvasUpdateRef.current) onCanvasUpdateRef.current(true);
     
     setIsDrawing(false);
     isDrawingRef.current = false;
@@ -341,10 +318,15 @@ export function useDrawingWithTools(
     needNewLayerRef.current = false;
   }, [eventToPoint, saveToHistory]);
 
-  /**
-   * Отмена текущего действия
-   */
   const cancelDrawing = useCallback(() => {
+    const layer = currentDrawingLayerRef.current;
+    
+    // Отменяем векторный штрих
+    if (layer?.vectorStrokes) {
+      layer.vectorStrokes.cancelStroke();
+      currentStrokeRef.current = null;
+    }
+    
     toolManager.handleCancel({});
     setIsDrawing(false);
     isDrawingRef.current = false;
@@ -352,9 +334,6 @@ export function useDrawingWithTools(
     needNewLayerRef.current = false;
   }, []);
 
-  /**
-   * Рендер превью инструмента
-   */
   const renderToolPreview = useCallback((previewCtx, point, settings, compositeCanvas) => {
     const tool = toolManager.getCurrent();
     if (!tool) return;
@@ -370,18 +349,12 @@ export function useDrawingWithTools(
     tool.renderPreview(previewCtx, point, fullSettings, { compositeCanvas });
   }, []);
 
-  /**
-   * Проверка: нужен ли источник для штампа
-   */
   const needsStampSource = useCallback(() => {
     if (currentTool !== TOOLS.STAMP) return false;
     const stampTool = toolManager.get(TOOLS.STAMP);
     return stampTool && !stampTool.hasSource();
   }, [currentTool]);
 
-  /**
-   * Получение позиции источника штампа
-   */
   const getStampSourcePoint = useCallback(() => {
     const stampTool = toolManager.get(TOOLS.STAMP);
     return stampTool?.getSourcePoint() || null;
@@ -391,24 +364,16 @@ export function useDrawingWithTools(
     isDrawing,
     currentTool,
     stampSourceSet,
-    
-    // Управление инструментами
     selectTool,
     setStampSource,
     needsStampSource,
     getStampSourcePoint,
     updateLayersRef,
-    
-    // Обработчики рисования
     startDrawing,
     continueDrawing,
     stopDrawing,
     cancelDrawing,
-    
-    // Превью
     renderToolPreview,
-    
-    // Утилиты
     eventToPoint
   };
 }

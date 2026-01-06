@@ -8,6 +8,7 @@ import { useDrawingWithTools } from '../hooks/useDrawing';
 import { useImageTransformWithLayers } from '../hooks/useImage';
 import { useCanvasViewport } from '../hooks/useCanvas';
 import { createCmykPdf } from '../services/cmykExport';
+import { getAdaptiveResolution, renderAllStrokes, needsHiResRender } from '../utils/hiResRenderer';
 import ToolbarWithLayers from './Toolbar';
 import AIGenerationModal from './AI';
 
@@ -46,6 +47,11 @@ function GarmentDesignerWithLayers() {
   const uvCtxRef = useRef(null);
   const compositeCanvasRef = useRef(null);
   
+  // HiDPI рендеринг
+  const hiResCanvasRef = useRef(null);
+  const currentRenderSizeRef = useRef(CANVAS_SIZE);
+  const hiResRenderTimeoutRef = useRef(null);
+  
   const sceneRef = useRef(null);
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
@@ -74,7 +80,6 @@ function GarmentDesignerWithLayers() {
   const imageTransformRef = useRef({ x: 0, y: 0, scale: 1, rotation: 0 });
   const uvLayoutImageRef = useRef(null);
   
-  // Long-press для штампа на мобильных
   const longPressTimerRef = useRef(null);
   const longPressPointRef = useRef(null);
   const isLongPressActiveRef = useRef(false);
@@ -83,25 +88,58 @@ function GarmentDesignerWithLayers() {
   const isMobileDeviceRef = useRef(isMobileDevice());
 
   const {
-    viewport,
-    isPanning,
-    spacePressed,
-    shouldPan,
+    viewport, isPanning, spacePressed, shouldPan,
     isInitialized: viewportInitialized,
-    zoomIn,
-    zoomOut,
-    fitToView,
-    resetZoom,
-    startPan,
-    pan,
-    endPan,
-    handleWheel,
-    handleTouchStart,
-    handleTouchMove,
-    screenToCanvas,
-    canvasToScreen,
-    getVisibleBounds
+    zoomIn, zoomOut, fitToView, resetZoom,
+    startPan, pan, endPan, handleWheel,
+    handleTouchStart, handleTouchMove,
+    screenToCanvas, canvasToScreen, getVisibleBounds
   } = useCanvasViewport(uvCanvasContainerRef, isMobile);
+
+  /**
+   * Рендеринг HiRes canvas для векторных слоёв
+   */
+  const renderHiResCanvas = useCallback(() => {
+    if (!needsHiResRender(viewport.zoom)) {
+      currentRenderSizeRef.current = CANVAS_SIZE;
+      hiResCanvasRef.current = null;
+      return null;
+    }
+    
+    const targetSize = getAdaptiveResolution(viewport.zoom, CANVAS_SIZE);
+    
+    if (!hiResCanvasRef.current || hiResCanvasRef.current.width !== targetSize) {
+      hiResCanvasRef.current = document.createElement('canvas');
+      hiResCanvasRef.current.width = targetSize;
+      hiResCanvasRef.current.height = targetSize;
+    }
+    
+    const hiCtx = hiResCanvasRef.current.getContext('2d');
+    hiCtx.imageSmoothingEnabled = true;
+    hiCtx.imageSmoothingQuality = 'high';
+    
+    hiCtx.fillStyle = '#ffffff';
+    hiCtx.fillRect(0, 0, targetSize, targetSize);
+    
+    const currentLayers = layersRef.current;
+    currentLayers.forEach(layer => {
+      if (!layer.visible) return;
+      hiCtx.globalAlpha = layer.opacity || 1;
+      
+      // Векторные слои - перерисовываем в высоком разрешении
+      if (layer.vectorStrokes && layer.vectorStrokes.strokes.length > 0) {
+        renderAllStrokes(hiCtx, layer.vectorStrokes, targetSize);
+      } else if (layer.canvas) {
+        // Растровые слои - масштабируем
+        hiCtx.drawImage(layer.canvas, 0, 0, targetSize, targetSize);
+      }
+    });
+    
+    hiCtx.globalAlpha = 1;
+    currentRenderSizeRef.current = targetSize;
+    
+    return hiResCanvasRef.current;
+  }, [viewport.zoom]);
 
   const renderUVCanvas = useCallback(() => {
     if (!uvCanvasRef.current) return;
@@ -116,15 +154,20 @@ function GarmentDesignerWithLayers() {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
-    const currentLayers = layersRef.current;
-    if (currentLayers && currentLayers.length > 0) {
-      currentLayers.forEach(layer => {
-        if (layer.visible && layer.canvas) {
-          ctx.globalAlpha = layer.opacity || 1;
-          ctx.drawImage(layer.canvas, 0, 0);
-        }
-      });
-      ctx.globalAlpha = 1;
+    // При высоком зуме используем HiRes рендер
+    if (needsHiResRender(viewport.zoom) && hiResCanvasRef.current) {
+      ctx.drawImage(hiResCanvasRef.current, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    } else {
+      const currentLayers = layersRef.current;
+      if (currentLayers && currentLayers.length > 0) {
+        currentLayers.forEach(layer => {
+          if (layer.visible && layer.canvas) {
+            ctx.globalAlpha = layer.opacity || 1;
+            ctx.drawImage(layer.canvas, 0, 0);
+          }
+        });
+        ctx.globalAlpha = 1;
+      }
     }
     
     const pendingImg = pendingImageRef.current;
@@ -132,10 +175,8 @@ function GarmentDesignerWithLayers() {
     if (pendingImg && imgTransform) {
       const originalWidth = pendingImg.naturalWidth || pendingImg.width;
       const originalHeight = pendingImg.naturalHeight || pendingImg.height;
-      
       const imgW = CANVAS_SIZE * imgTransform.scale;
       const imgH = CANVAS_SIZE * imgTransform.scale * (originalHeight / originalWidth);
-      
       const centerX = CANVAS_SIZE / 2 + imgTransform.x;
       const centerY = CANVAS_SIZE / 2 + imgTransform.y;
       
@@ -153,7 +194,6 @@ function GarmentDesignerWithLayers() {
       ctx.globalAlpha = 1.0;
     }
     
-    // Обновляем compositeCanvas для штампа
     if (compositeCanvasRef.current) {
       const compositeCtx = compositeCanvasRef.current.getContext('2d');
       compositeCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
@@ -161,7 +201,27 @@ function GarmentDesignerWithLayers() {
     }
     
     if (textureRef.current) textureRef.current.needsUpdate = true;
-  }, []);
+  }, [viewport.zoom]);
+
+  // Обновление HiRes при изменении зума
+  useEffect(() => {
+    if (hiResRenderTimeoutRef.current) {
+      clearTimeout(hiResRenderTimeoutRef.current);
+    }
+    
+    hiResRenderTimeoutRef.current = setTimeout(() => {
+      if (needsHiResRender(viewport.zoom)) {
+        renderHiResCanvas();
+        renderUVCanvas();
+      }
+    }, 100);
+    
+    return () => {
+      if (hiResRenderTimeoutRef.current) {
+        clearTimeout(hiResRenderTimeoutRef.current);
+      }
+    };
+  }, [viewport.zoom, renderHiResCanvas, renderUVCanvas]);
 
   const handleUVLayoutLoaded = useCallback(() => { renderUVCanvas(); }, [renderUVCanvas]);
   const uvLayoutImage = useUVLayout(handleUVLayoutLoaded);
@@ -172,10 +232,14 @@ function GarmentDesignerWithLayers() {
   }, [uvLayoutImage, renderUVCanvas]);
 
   const updateCanvas = useCallback((force = false) => {
+    // Инвалидируем HiRes кэш при изменении
+    if (force && needsHiResRender(viewport.zoom)) {
+      renderHiResCanvas();
+    }
     renderUVCanvas();
     if (textureRef.current) textureRef.current.needsUpdate = true;
     if (force) setUpdateTrigger(prev => prev + 1);
-  }, [renderUVCanvas]);
+  }, [renderUVCanvas, renderHiResCanvas, viewport.zoom]);
 
   const {
     layers, activeLayerId, setActiveLayerId, getActiveLayer,
@@ -185,51 +249,28 @@ function GarmentDesignerWithLayers() {
     undo, redo, canUndo, canRedo
   } = useLayers(updateCanvas);
 
-  // Функция получения слоёв для штампа
   const getLayers = useCallback(() => layersRef.current, []);
-  
-  // Функция получения compositeCanvas для штампа
   const getCompositeCanvas = useCallback(() => compositeCanvasRef.current, []);
 
   useEffect(() => { layersRef.current = layers; renderUVCanvas(); }, [layers, renderUVCanvas]);
 
   const {
-    isDrawing,
-    currentTool,
-    stampSourceSet,
-    selectTool,
-    setStampSource,
-    needsStampSource,
-    getStampSourcePoint,
-    updateLayersRef,
-    startDrawing,
-    continueDrawing,
-    stopDrawing,
-    cancelDrawing
+    isDrawing, currentTool, stampSourceSet,
+    selectTool, setStampSource, needsStampSource, getStampSourcePoint,
+    updateLayersRef, startDrawing, continueDrawing, stopDrawing, cancelDrawing
   } = useDrawingWithTools(
-    uvLayoutImage,
-    getActiveLayer,
-    addDrawingLayer,
-    saveToHistory,
-    updateCanvas,
-    viewport,
-    screenToCanvas,
-    getCompositeCanvas,
-    getLayers
+    uvLayoutImage, getActiveLayer, addDrawingLayer, saveToHistory,
+    updateCanvas, viewport, screenToCanvas, getCompositeCanvas, getLayers
   );
 
-  // Обновляем ссылку на слои для хука рисования
   useEffect(() => {
-    if (updateLayersRef) {
-      updateLayersRef(layers);
-    }
+    if (updateLayersRef) updateLayersRef(layers);
   }, [layers, updateLayersRef]);
 
   const {
     pendingImage, imageTransform, setImageTransform, isTransformMode,
-    qualityInfo,
-    handleImageUpload, setDesignImageDirect, startDrag, drag, stopDrag,
-    applyImage, cancelTransform
+    qualityInfo, handleImageUpload, setDesignImageDirect,
+    startDrag, drag, stopDrag, applyImage, cancelTransform
   } = useImageTransformWithLayers(uvLayoutImage, addImageLayer, saveToHistory, updateCanvas);
 
   useEffect(() => {
@@ -238,12 +279,11 @@ function GarmentDesignerWithLayers() {
     renderUVCanvas();
   }, [pendingImage, imageTransform, renderUVCanvas]);
 
-  useEffect(() => {
-    selectTool(tool);
-  }, [tool, selectTool]);
+  useEffect(() => { selectTool(tool); }, [tool, selectTool]);
 
   const handleAIImageGenerated = useCallback((img) => { setDesignImageDirect(img); }, [setDesignImageDirect]);
 
+  // Three.js инициализация
   useEffect(() => {
     if (!containerRef.current || globalSceneInitialized || rendererRef.current) return;
     mountedRef.current = true;
@@ -269,7 +309,7 @@ function GarmentDesignerWithLayers() {
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
     
-    setupContextHandlers(renderer, 
+    setupContextHandlers(renderer,
       () => { if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current); setWebglError('WebGL контекст потерян'); },
       () => { setWebglError(null); if (mountedRef.current) animate(); }
     );
@@ -315,6 +355,7 @@ function GarmentDesignerWithLayers() {
     };
   }, []);
 
+  // Загрузка модели
   useEffect(() => {
     if (!sceneRef.current || !rendererRef.current || !uvCanvasRef.current || modelLoadedRef.current) return;
     modelLoadedRef.current = true;
@@ -334,6 +375,7 @@ function GarmentDesignerWithLayers() {
     );
   }, [renderUVCanvas]);
 
+  // Composite canvas
   useEffect(() => {
     if (!compositeCanvasRef.current) {
       const canvas = document.createElement('canvas');
@@ -345,27 +387,16 @@ function GarmentDesignerWithLayers() {
 
   const getCanvasCoords = useCallback((e) => {
     if (!uvCanvasContainerRef.current) return { x: 0, y: 0 };
-    
     const rect = uvCanvasContainerRef.current.getBoundingClientRect();
     const touch = e.touches?.[0] || e.changedTouches?.[0];
     const clientX = touch ? touch.clientX : e.clientX;
     const clientY = touch ? touch.clientY : e.clientY;
-    
-    // Координаты относительно контейнера
     const screenX = clientX - rect.left;
     const screenY = clientY - rect.top;
-    
-    // Преобразуем в canvas-координаты с учётом viewport (zoom и pan)
-    // screenToCanvas уже учитывает zoom и pan
     const canvasCoords = screenToCanvas(screenX, screenY);
-    
-    return {
-      x: canvasCoords.x,
-      y: canvasCoords.y
-    };
+    return { x: canvasCoords.x, y: canvasCoords.y };
   }, [screenToCanvas]);
 
-  // Очистка long-press таймера
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -382,10 +413,8 @@ function GarmentDesignerWithLayers() {
     const rect = uvCanvasContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    // Обработка multi-touch для pinch-to-zoom
     if (e.touches) {
       touchCountRef.current = e.touches.length;
-      
       if (e.touches.length === 2) {
         e.preventDefault();
         clearLongPressTimer();
@@ -404,7 +433,6 @@ function GarmentDesignerWithLayers() {
       return;
     }
 
-    // Alt+Click для штампа на desktop
     if (tool === TOOLS.STAMP && e.altKey) {
       const coords = getCanvasCoords(e);
       if (coords.x >= 0 && coords.x < CANVAS_SIZE && coords.y >= 0 && coords.y < CANVAS_SIZE) {
@@ -413,21 +441,16 @@ function GarmentDesignerWithLayers() {
       return;
     }
 
-    // Long-press для штампа на мобильных
     if (tool === TOOLS.STAMP && (e.touches || isMobile) && needsStampSource()) {
       const coords = getCanvasCoords(e);
       longPressPointRef.current = coords;
-      
       longPressTimerRef.current = setTimeout(() => {
         if (longPressPointRef.current) {
           const { x, y } = longPressPointRef.current;
           if (x >= 0 && x < CANVAS_SIZE && y >= 0 && y < CANVAS_SIZE) {
             setStampSource(x, y, compositeCanvasRef.current);
             isLongPressActiveRef.current = true;
-            // Вибрация для обратной связи на мобильных
-            if (navigator.vibrate) {
-              navigator.vibrate(50);
-            }
+            if (navigator.vibrate) navigator.vibrate(50);
           }
         }
         clearLongPressTimer();
@@ -443,8 +466,8 @@ function GarmentDesignerWithLayers() {
 
     const settings = { brushSize, brushColor, brushHardness, brushOpacity };
     startDrawing(e, rect, settings, compositeCanvasRef.current);
-  }, [shouldPan, tool, isTransformMode, pendingImage, brushSize, brushColor, brushHardness, brushOpacity, 
-      startPan, getCanvasCoords, setStampSource, startDrag, startDrawing, handleTouchStart, isMobile, 
+  }, [shouldPan, tool, isTransformMode, pendingImage, brushSize, brushColor, brushHardness, brushOpacity,
+      startPan, getCanvasCoords, setStampSource, startDrag, startDrawing, handleTouchStart, isMobile,
       clearLongPressTimer, needsStampSource]);
 
   const handlePointerMove = useCallback((e) => {
@@ -455,16 +478,12 @@ function GarmentDesignerWithLayers() {
     const rect = uvCanvasContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    // Отменяем long-press если двигаемся
     if (longPressPointRef.current) {
       const coords = getCanvasCoords(e);
       const dist = Math.hypot(coords.x - longPressPointRef.current.x, coords.y - longPressPointRef.current.y);
-      if (dist > 15) {
-        clearLongPressTimer();
-      }
+      if (dist > 15) clearLongPressTimer();
     }
 
-    // Pinch-to-zoom
     if (e.touches && e.touches.length === 2) {
       e.preventDefault();
       clearLongPressTimer();
@@ -483,12 +502,11 @@ function GarmentDesignerWithLayers() {
       return;
     }
 
-    // Не рисуем если был long-press (установка источника)
     if (isLongPressActiveRef.current) return;
 
     const settings = { brushSize, brushColor, brushHardness, brushOpacity };
     continueDrawing(e, rect, settings, compositeCanvasRef.current);
-  }, [isPanning, isTransformMode, brushSize, brushColor, brushHardness, brushOpacity, 
+  }, [isPanning, isTransformMode, brushSize, brushColor, brushHardness, brushOpacity,
       getCanvasCoords, pan, drag, continueDrawing, handleTouchMove, clearLongPressTimer]);
 
   const handlePointerUp = useCallback((e) => {
@@ -496,19 +514,23 @@ function GarmentDesignerWithLayers() {
     lastPinchDistanceRef.current = 0;
     clearLongPressTimer();
     
-    // Если был long-press - не заканчиваем рисование
     if (isLongPressActiveRef.current) {
       isLongPressActiveRef.current = false;
       return;
     }
     
-    if (isPanning) {
-      endPan();
-      return;
-    }
+    if (isPanning) { endPan(); return; }
     stopDrawing(e, uvCanvasContainerRef.current?.getBoundingClientRect());
     stopDrag();
-  }, [isPanning, endPan, stopDrawing, stopDrag, clearLongPressTimer]);
+    
+    // Обновляем HiRes после рисования
+    if (needsHiResRender(viewport.zoom)) {
+      setTimeout(() => {
+        renderHiResCanvas();
+        renderUVCanvas();
+      }, 50);
+    }
+  }, [isPanning, endPan, stopDrawing, stopDrag, clearLongPressTimer, viewport.zoom, renderHiResCanvas, renderUVCanvas]);
 
   const handlePointerLeave = useCallback(() => {
     clearLongPressTimer();
@@ -517,11 +539,8 @@ function GarmentDesignerWithLayers() {
     stopDrag();
   }, [isPanning, endPan, stopDrawing, stopDrag, clearLongPressTimer]);
 
-  // Очистка таймера при размонтировании
   useEffect(() => {
-    return () => {
-      clearLongPressTimer();
-    };
+    return () => clearLongPressTimer();
   }, [clearLongPressTimer]);
 
   const downloadDesign = useCallback(async () => {
@@ -559,8 +578,7 @@ function GarmentDesignerWithLayers() {
     onUndo: undo, onRedo: redo, canUndo, canRedo,
     isTransformMode, imageTransform, setImageTransform,
     onApplyImage: applyImage, onCancelImage: cancelTransform, isMobile,
-    qualityInfo,
-    layers, activeLayerId, onSelectLayer: setActiveLayerId,
+    qualityInfo, layers, activeLayerId, onSelectLayer: setActiveLayerId,
     onToggleLayerVisibility: toggleLayerVisibility,
     onMoveLayerUp: moveLayerUp, onMoveLayerDown: moveLayerDown,
     onDeleteLayer: deleteLayer, onAddDrawingLayer: addDrawingLayer,
@@ -579,11 +597,8 @@ function GarmentDesignerWithLayers() {
         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm flex-shrink-0">
           <h1 className="text-lg font-semibold text-gray-900">Дизайнер</h1>
           <div className="flex items-center gap-2">
-            <button 
-              onClick={downloadDesign} 
-              disabled={exportingPdf}
-              className="px-3 py-2 rounded-lg text-sm font-medium bg-green-500 text-white hover:bg-green-600 disabled:opacity-50"
-            >
+            <button onClick={downloadDesign} disabled={exportingPdf}
+              className="px-3 py-2 rounded-lg text-sm font-medium bg-green-500 text-white hover:bg-green-600 disabled:opacity-50">
               {exportingPdf ? '...' : 'Скачать'}
             </button>
             <button onClick={() => setShowTools(!showTools)} className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200">
@@ -600,11 +615,8 @@ function GarmentDesignerWithLayers() {
           <div className="bg-white border-b border-gray-200 px-4 py-3 flex-shrink-0">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <button 
-                  onClick={downloadDesign} 
-                  disabled={exportingPdf} 
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-green-500 text-white hover:bg-green-600 disabled:opacity-50"
-                >
+                <button onClick={downloadDesign} disabled={exportingPdf}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-green-500 text-white hover:bg-green-600 disabled:opacity-50">
                   {exportingPdf ? 'Экспорт...' : 'Скачать дизайн'}
                 </button>
               </div>
@@ -642,10 +654,7 @@ function GarmentDesignerWithLayers() {
         >
           <div className="absolute inset-4 border-2 border-dashed border-gray-300 rounded-lg pointer-events-none" />
           
-          <div 
-            className="relative"
-            style={canvasContainerStyle}
-          >
+          <div className="relative" style={canvasContainerStyle}>
             <canvas 
               ref={uvCanvasRef} 
               width={CANVAS_SIZE} 
@@ -653,7 +662,7 @@ function GarmentDesignerWithLayers() {
               className="w-full h-full border-2 border-gray-300 rounded-lg bg-white shadow-lg"
               style={{ 
                 touchAction: 'none',
-                imageRendering: viewport.zoom > 2 ? 'pixelated' : 'auto'
+                imageRendering: viewport.zoom > 2 && !hiResCanvasRef.current ? 'pixelated' : 'auto'
               }}
               onMouseDown={handlePointerDown}
               onMouseMove={handlePointerMove}
@@ -667,6 +676,9 @@ function GarmentDesignerWithLayers() {
           
           <div className="absolute bottom-6 right-6 px-2 py-1 bg-black/60 text-white text-xs rounded-md font-mono">
             {Math.round(viewport.zoom * 100)}%
+            {needsHiResRender(viewport.zoom) && hiResCanvasRef.current && (
+              <span className="ml-1 text-green-400">HD</span>
+            )}
           </div>
           
           {tool === TOOLS.STAMP && needsStampSource() && (
