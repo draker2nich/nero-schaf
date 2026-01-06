@@ -1,10 +1,9 @@
 /**
  * Инструмент "Штамп" (Clone Stamp)
  * 
- * Функционал:
- * - Копирует видимую текстуру со ВСЕХ слоёв КРОМЕ базового (фонового)
- * - Включает: рисунки, загруженные изображения, AI-генерации
- * - Корректная работа с UV-маской
+ * Исправления:
+ * - Множественное использование без сброса источника
+ * - Корректная работа с UV-маской независимо от viewport
  */
 
 import { BaseTool } from './BaseTool';
@@ -23,19 +22,24 @@ export class StampTool extends BaseTool {
     this.firstDrawPoint = null;
     this.sourceImageData = null;
     this.uvMaskData = null;
-    this.needsCacheUpdate = true;
+    // Убираем needsCacheUpdate - будем обновлять кэш только при явном запросе
+    this.lastCacheUpdateTime = 0;
   }
 
   onSelect(context) {
-    this.needsCacheUpdate = true;
+    // Не сбрасываем источник при выборе инструмента!
+    // Только инвалидируем кэш изображения
+    this.sourceImageData = null;
   }
 
   onDeselect(context) {
     super.onDeselect(context);
+    // НЕ сбрасываем sourcePoint - сохраняем между переключениями инструментов
   }
 
   /**
    * Установка источника клонирования
+   * Координаты уже в canvas-пространстве (0 - CANVAS_SIZE)
    */
   setSource(point, context) {
     const x = Math.round(point.x);
@@ -48,9 +52,8 @@ export class StampTool extends BaseTool {
     this.sourcePoint = { x, y };
     this.firstDrawPoint = null;
     this.offset = { x: 0, y: 0 };
-    this.needsCacheUpdate = true;
     
-    // Кэшируем изображение БЕЗ базового слоя
+    // Обновляем кэш изображения
     this.cacheSourceImage(context);
     
     // Сохраняем UV-маску
@@ -58,17 +61,19 @@ export class StampTool extends BaseTool {
       this.uvMaskData = context.uvMaskData;
     }
     
+    console.log('[StampTool] Source set at:', x, y);
     return true;
   }
 
+  /**
+   * Инвалидация кэша - вызывается после рисования
+   */
   invalidateCache() {
-    this.needsCacheUpdate = true;
     this.sourceImageData = null;
   }
 
   /**
-   * Кэширование изображения - ВСЕ слои КРОМЕ базового (type !== 'base')
-   * Включает: рисунки, загруженные изображения, AI-генерации
+   * Кэширование изображения - ВСЕ слои КРОМЕ базового
    */
   cacheSourceImage(context) {
     const { layers } = context;
@@ -78,17 +83,14 @@ export class StampTool extends BaseTool {
       return;
     }
     
-    // Создаём временный canvas для композитинга
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = CANVAS_SIZE;
     tempCanvas.height = CANVAS_SIZE;
     const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
     
-    // Очищаем с прозрачным фоном
     tempCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     
-    // Рисуем ВСЕ видимые слои КРОМЕ базового (фонового)
-    // Это включает: drawing, image (загруженные и AI-сгенерированные)
+    // Рисуем ВСЕ видимые слои КРОМЕ базового
     layers.forEach(layer => {
       if (layer.visible && layer.canvas && layer.type !== 'base') {
         tempCtx.globalAlpha = layer.opacity || 1;
@@ -99,7 +101,8 @@ export class StampTool extends BaseTool {
     
     try {
       this.sourceImageData = tempCtx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-      this.needsCacheUpdate = false;
+      this.lastCacheUpdateTime = Date.now();
+      console.log('[StampTool] Cache updated');
     } catch (e) {
       console.error('StampTool: failed to cache source image', e);
       this.sourceImageData = null;
@@ -115,11 +118,10 @@ export class StampTool extends BaseTool {
   }
 
   /**
-   * Проверка, находится ли точка в UV-маске
-   * Координаты уже в canvas-пространстве (0 - CANVAS_SIZE)
+   * Проверка UV-маски
+   * Координаты в canvas-пространстве (0 - CANVAS_SIZE)
    */
   isInUVMask(x, y) {
-    // Если UV-маска не загружена - разрешаем рисовать везде
     if (!this.uvMaskData) {
       return true;
     }
@@ -127,27 +129,21 @@ export class StampTool extends BaseTool {
     const ix = Math.round(x);
     const iy = Math.round(y);
     
-    // Проверяем границы canvas
     if (ix < 0 || ix >= CANVAS_SIZE || iy < 0 || iy >= CANVAS_SIZE) {
       return false;
     }
     
-    // Проверяем Alpha канал UV-маски
-    // UV-маска имеет белые области там где можно рисовать
     const idx = (iy * CANVAS_SIZE + ix) * 4 + 3;
-    const alpha = this.uvMaskData[idx];
-    
-    // Порог > 10 для учёта антиалиасинга краёв
-    return alpha > 10;
+    return this.uvMaskData[idx] > 10;
   }
 
   onPointerDown(point, context) {
-    // Сохраняем UV-маску из контекста
+    // Сохраняем UV-маску
     if (context.uvMaskData) {
       this.uvMaskData = context.uvMaskData;
     }
     
-    // Проверка Alt+Click для установки источника (desktop)
+    // Alt+Click для установки источника
     if (context.altKey) {
       const result = this.setSource(point, context);
       if (result && context.onSourceSet) {
@@ -156,19 +152,19 @@ export class StampTool extends BaseTool {
       return { sourceSet: result };
     }
     
-    // Если нет источника, показываем сообщение
+    // Если нет источника
     if (!this.hasSource()) {
       return { needSource: true };
     }
     
-    // Обновляем кэш если нужно
-    if (this.needsCacheUpdate || !this.sourceImageData) {
+    // Обновляем кэш если он устарел или отсутствует
+    if (!this.sourceImageData) {
       this.cacheSourceImage(context);
     }
     
     super.onPointerDown(point, context);
     
-    // Вычисляем offset при первом клике
+    // Вычисляем offset при первом клике в этой сессии рисования
     if (!this.firstDrawPoint) {
       this.firstDrawPoint = { x: point.x, y: point.y };
       this.offset = {
@@ -181,6 +177,8 @@ export class StampTool extends BaseTool {
     const adjustedSettings = this.applyPressure(settings, point.pressure || 1);
     
     this.stampPoint(point.x, point.y, adjustedSettings, context);
+    
+    return { drawing: true };
   }
 
   onPointerMove(point, context) {
@@ -206,31 +204,36 @@ export class StampTool extends BaseTool {
 
   onPointerUp(point, context) {
     super.onPointerUp(point, context);
-    // Инвалидируем кэш после рисования
-    this.needsCacheUpdate = true;
+    
+    // Сбрасываем firstDrawPoint чтобы при следующем рисовании
+    // offset пересчитался относительно нового места
+    this.firstDrawPoint = null;
+    
+    // Инвалидируем кэш ПОСЛЕ рисования - при следующем использовании обновится
+    this.sourceImageData = null;
   }
 
   onCancel(context) {
     super.onCancel(context);
+    this.firstDrawPoint = null;
   }
 
   stampPoint(x, y, settings, context) {
     if (!this.sourceImageData) return;
     
-    // Проверяем UV-маску для центральной точки
-    // x, y уже в canvas-координатах (0 - CANVAS_SIZE)
+    // Координаты уже в canvas-пространстве благодаря screenToCanvas в useDrawing
+    // Проверяем UV-маску
     if (!this.isInUVMask(x, y)) return;
     
     const { ctx } = context;
     const { size, hardness, opacity } = settings;
     
-    // Позиция источника с учётом смещения
+    // Позиция источника
     const sourceX = Math.round(x + this.offset.x);
     const sourceY = Math.round(y + this.offset.y);
     
     ctx.save();
     
-    // Размер временного canvas
     const tempSize = Math.ceil(size * 2 + 4);
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = tempSize;
@@ -240,26 +243,23 @@ export class StampTool extends BaseTool {
     const centerX = tempSize / 2;
     const centerY = tempSize / 2;
     
-    // Копируем область из источника
     const srcLeft = sourceX - Math.floor(tempSize / 2);
     const srcTop = sourceY - Math.floor(tempSize / 2);
     
-    // Создаём ImageData для временного canvas
     const destImageData = tempCtx.createImageData(tempSize, tempSize);
     const srcData = this.sourceImageData.data;
     const destData = destImageData.data;
     
+    // Копируем пиксели из источника
     for (let dy = 0; dy < tempSize; dy++) {
       for (let dx = 0; dx < tempSize; dx++) {
         const srcPx = srcLeft + dx;
         const srcPy = srcTop + dy;
         
-        // Проверяем границы источника
         if (srcPx >= 0 && srcPx < CANVAS_SIZE && srcPy >= 0 && srcPy < CANVAS_SIZE) {
           const srcIdx = (srcPy * CANVAS_SIZE + srcPx) * 4;
           const destIdx = (dy * tempSize + dx) * 4;
           
-          // Копируем только если есть непрозрачные пиксели
           const alpha = srcData[srcIdx + 3];
           if (alpha > 0) {
             destData[destIdx] = srcData[srcIdx];
@@ -273,7 +273,7 @@ export class StampTool extends BaseTool {
     
     tempCtx.putImageData(destImageData, 0, 0);
     
-    // Применяем круглую маску с учётом жёсткости
+    // Круглая маска с жёсткостью
     tempCtx.globalCompositeOperation = 'destination-in';
     
     const gradient = tempCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, size);
@@ -306,11 +306,12 @@ export class StampTool extends BaseTool {
     tempCtx.fill();
     
     // Применяем UV-маску к временному изображению
+    // Координаты целевой точки в canvas-пространстве
     if (this.uvMaskData) {
       this.applyUVMaskToTemp(tempCtx, Math.round(x - centerX), Math.round(y - centerY), tempSize);
     }
     
-    // Рисуем на целевой canvas с учётом прозрачности
+    // Рисуем на целевой canvas
     ctx.globalAlpha = opacity / 100;
     ctx.drawImage(tempCanvas, Math.round(x - centerX), Math.round(y - centerY));
     
@@ -328,17 +329,17 @@ export class StampTool extends BaseTool {
     
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
+        // Координаты в canvas-пространстве
         const canvasX = offsetX + x;
         const canvasY = offsetY + y;
         
-        // Проверяем границы canvas
         if (canvasX < 0 || canvasX >= CANVAS_SIZE || canvasY < 0 || canvasY >= CANVAS_SIZE) {
           const idx = (y * size + x) * 4;
           data[idx + 3] = 0;
           continue;
         }
         
-        // Проверяем UV-маску (alpha канал)
+        // Проверяем UV-маску
         const uvIdx = (canvasY * CANVAS_SIZE + canvasX) * 4 + 3;
         if (this.uvMaskData[uvIdx] <= 10) {
           const idx = (y * size + x) * 4;
@@ -355,7 +356,7 @@ export class StampTool extends BaseTool {
     
     previewCtx.save();
     
-    // Превью курсора (зелёный круг)
+    // Превью курсора
     previewCtx.globalAlpha = 0.6;
     previewCtx.strokeStyle = '#00cc00';
     previewCtx.lineWidth = 2;
@@ -364,9 +365,8 @@ export class StampTool extends BaseTool {
     previewCtx.arc(point.x, point.y, size, 0, Math.PI * 2);
     previewCtx.stroke();
     
-    // Показываем источник если установлен
     if (this.hasSource()) {
-      // Крестик на исходной точке источника
+      // Крестик на источнике
       previewCtx.strokeStyle = '#ff6600';
       previewCtx.setLineDash([]);
       previewCtx.lineWidth = 2;
@@ -377,13 +377,12 @@ export class StampTool extends BaseTool {
       previewCtx.lineTo(this.sourcePoint.x, this.sourcePoint.y + 12);
       previewCtx.stroke();
       
-      // Если уже начали рисовать - показываем текущий источник
+      // Текущий источник при рисовании
       if (this.firstDrawPoint) {
         const sourceX = point.x + this.offset.x;
         const sourceY = point.y + this.offset.y;
         
         if (sourceX >= 0 && sourceX < CANVAS_SIZE && sourceY >= 0 && sourceY < CANVAS_SIZE) {
-          // Красный круг - откуда берём
           previewCtx.globalAlpha = 0.5;
           previewCtx.strokeStyle = '#ff0000';
           previewCtx.setLineDash([2, 2]);
@@ -391,7 +390,6 @@ export class StampTool extends BaseTool {
           previewCtx.arc(sourceX, sourceY, size, 0, Math.PI * 2);
           previewCtx.stroke();
           
-          // Линия между источником и целью
           previewCtx.globalAlpha = 0.3;
           previewCtx.beginPath();
           previewCtx.moveTo(sourceX, sourceY);
