@@ -77,6 +77,7 @@ function GarmentDesignerWithLayers() {
   // Long-press для штампа на мобильных
   const longPressTimerRef = useRef(null);
   const longPressPointRef = useRef(null);
+  const isLongPressActiveRef = useRef(false);
   
   const isMobile = useIsMobile();
   const isMobileDeviceRef = useRef(isMobileDevice());
@@ -152,6 +153,7 @@ function GarmentDesignerWithLayers() {
       ctx.globalAlpha = 1.0;
     }
     
+    // Обновляем compositeCanvas для штампа
     if (compositeCanvasRef.current) {
       const compositeCtx = compositeCanvasRef.current.getContext('2d');
       compositeCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
@@ -185,6 +187,9 @@ function GarmentDesignerWithLayers() {
 
   // Функция получения слоёв для штампа
   const getLayers = useCallback(() => layersRef.current, []);
+  
+  // Функция получения compositeCanvas для штампа
+  const getCompositeCanvas = useCallback(() => compositeCanvasRef.current, []);
 
   useEffect(() => { layersRef.current = layers; renderUVCanvas(); }, [layers, renderUVCanvas]);
 
@@ -209,8 +214,8 @@ function GarmentDesignerWithLayers() {
     updateCanvas,
     viewport,
     screenToCanvas,
-    () => compositeCanvasRef.current,
-    getLayers // Передаём функцию получения слоёв
+    getCompositeCanvas,
+    getLayers
   );
 
   // Обновляем ссылку на слои для хука рисования
@@ -346,10 +351,18 @@ function GarmentDesignerWithLayers() {
     const clientX = touch ? touch.clientX : e.clientX;
     const clientY = touch ? touch.clientY : e.clientY;
     
+    // Координаты относительно контейнера
     const screenX = clientX - rect.left;
     const screenY = clientY - rect.top;
     
-    return screenToCanvas(screenX, screenY);
+    // Преобразуем в canvas-координаты с учётом viewport (zoom и pan)
+    // screenToCanvas уже учитывает zoom и pan
+    const canvasCoords = screenToCanvas(screenX, screenY);
+    
+    return {
+      x: canvasCoords.x,
+      y: canvasCoords.y
+    };
   }, [screenToCanvas]);
 
   // Очистка long-press таймера
@@ -359,6 +372,7 @@ function GarmentDesignerWithLayers() {
       longPressTimerRef.current = null;
     }
     longPressPointRef.current = null;
+    isLongPressActiveRef.current = false;
   }, []);
 
   const touchCountRef = useRef(0);
@@ -400,7 +414,7 @@ function GarmentDesignerWithLayers() {
     }
 
     // Long-press для штампа на мобильных
-    if (tool === TOOLS.STAMP && (e.touches || isMobile)) {
+    if (tool === TOOLS.STAMP && (e.touches || isMobile) && needsStampSource()) {
       const coords = getCanvasCoords(e);
       longPressPointRef.current = coords;
       
@@ -409,6 +423,7 @@ function GarmentDesignerWithLayers() {
           const { x, y } = longPressPointRef.current;
           if (x >= 0 && x < CANVAS_SIZE && y >= 0 && y < CANVAS_SIZE) {
             setStampSource(x, y, compositeCanvasRef.current);
+            isLongPressActiveRef.current = true;
             // Вибрация для обратной связи на мобильных
             if (navigator.vibrate) {
               navigator.vibrate(50);
@@ -429,7 +444,8 @@ function GarmentDesignerWithLayers() {
     const settings = { brushSize, brushColor, brushHardness, brushOpacity };
     startDrawing(e, rect, settings, compositeCanvasRef.current);
   }, [shouldPan, tool, isTransformMode, pendingImage, brushSize, brushColor, brushHardness, brushOpacity, 
-      startPan, getCanvasCoords, setStampSource, startDrag, startDrawing, handleTouchStart, isMobile, clearLongPressTimer]);
+      startPan, getCanvasCoords, setStampSource, startDrag, startDrawing, handleTouchStart, isMobile, 
+      clearLongPressTimer, needsStampSource]);
 
   const handlePointerMove = useCallback((e) => {
     const now = Date.now();
@@ -467,6 +483,9 @@ function GarmentDesignerWithLayers() {
       return;
     }
 
+    // Не рисуем если был long-press (установка источника)
+    if (isLongPressActiveRef.current) return;
+
     const settings = { brushSize, brushColor, brushHardness, brushOpacity };
     continueDrawing(e, rect, settings, compositeCanvasRef.current);
   }, [isPanning, isTransformMode, brushSize, brushColor, brushHardness, brushOpacity, 
@@ -476,6 +495,12 @@ function GarmentDesignerWithLayers() {
     touchCountRef.current = 0;
     lastPinchDistanceRef.current = 0;
     clearLongPressTimer();
+    
+    // Если был long-press - не заканчиваем рисование
+    if (isLongPressActiveRef.current) {
+      isLongPressActiveRef.current = false;
+      return;
+    }
     
     if (isPanning) {
       endPan();
