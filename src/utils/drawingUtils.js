@@ -30,20 +30,49 @@ export function initUVMaskCache(uvLayoutImage) {
 }
 
 /**
+ * Получение данных UV-маски для внешнего использования
+ */
+export function getUVMaskData() {
+  return uvMaskData;
+}
+
+/**
  * Проверка пикселя в UV маске
+ * Возвращает true если пиксель внутри допустимой области
  */
 export function isPixelInUVMask(x, y) {
-  if (!uvMaskData) return true;
+  if (!uvMaskData) return true; // Если маски нет, разрешаем везде
   
   const ix = Math.round(x);
   const iy = Math.round(y);
   
+  // За пределами холста - не рисуем
   if (ix < 0 || ix >= uvMaskWidth || iy < 0 || iy >= uvMaskHeight) {
     return false;
   }
   
+  // Проверяем альфа-канал UV-маски
   const idx = (iy * uvMaskWidth + ix) * 4 + 3;
-  return uvMaskData[idx] > 0;
+  return uvMaskData[idx] > 10; // Порог > 10 для учёта антиалиасинга
+}
+
+/**
+ * Проверка области в UV маске (для оптимизации)
+ */
+export function isAreaInUVMask(x, y, radius) {
+  if (!uvMaskData) return true;
+  
+  // Проверяем центр и 4 точки по краям
+  const points = [
+    { x, y },
+    { x: x - radius, y },
+    { x: x + radius, y },
+    { x, y: y - radius },
+    { x, y: y + radius }
+  ];
+  
+  // Если хотя бы одна точка внутри маски - можно рисовать
+  return points.some(p => isPixelInUVMask(p.x, p.y));
 }
 
 /**
@@ -75,34 +104,15 @@ export function parseColor(color) {
 }
 
 /**
- * Вычисление профиля жёсткости кисти
- */
-function calculateBrushAlpha(distance, hardness) {
-  const h = hardness / 100;
-  
-  if (h >= 0.99) return distance <= 1 ? 1 : 0;
-  
-  if (h <= 0.01) {
-    const sigma = 0.4;
-    return Math.max(0, Math.exp(-Math.pow(distance, 2) / (2 * sigma * sigma)));
-  }
-  
-  const solidRadius = h * 0.8;
-  if (distance <= solidRadius) return 1;
-  if (distance >= 1) return 0;
-  
-  const t = (distance - solidRadius) / (1 - solidRadius);
-  const smoothT = t * t * t * (t * (t * 6 - 15) + 10);
-  return 1 - smoothT;
-}
-
-/**
- * Рисование точки с градиентом (поддержка opacity)
+ * Рисование точки с градиентом
  */
 function drawPointWithGradient(x, y, tool, brushColor, brushSize, ctx, hardness, opacity = 100) {
-  ctx.save();
+  // Проверяем что хотя бы часть области попадает в UV маску
+  if (tool === TOOLS.DRAW && !isAreaInUVMask(x, y, brushSize)) {
+    return;
+  }
   
-  // Применяем общую прозрачность
+  ctx.save();
   ctx.globalAlpha = opacity / 100;
   
   const h = hardness / 100;
@@ -115,7 +125,7 @@ function drawPointWithGradient(x, y, tool, brushColor, brushSize, ctx, hardness,
     
     if (h >= 0.99) {
       gradient.addColorStop(0, `rgba(${r},${g},${b},1)`);
-      gradient.addColorStop(0.99, `rgba(${r},${g},${b},1)`);
+      gradient.addColorStop(0.95, `rgba(${r},${g},${b},1)`);
       gradient.addColorStop(1, `rgba(${r},${g},${b},0)`);
     } else if (h <= 0.01) {
       gradient.addColorStop(0, `rgba(${r},${g},${b},1)`);
@@ -145,7 +155,7 @@ function drawPointWithGradient(x, y, tool, brushColor, brushSize, ctx, hardness,
     
     if (h >= 0.99) {
       gradient.addColorStop(0, 'rgba(255,255,255,1)');
-      gradient.addColorStop(0.99, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.95, 'rgba(255,255,255,1)');
       gradient.addColorStop(1, 'rgba(255,255,255,0)');
     } else if (h <= 0.01) {
       gradient.addColorStop(0, 'rgba(255,255,255,1)');
@@ -170,7 +180,7 @@ function drawPointWithGradient(x, y, tool, brushColor, brushSize, ctx, hardness,
 }
 
 /**
- * Рисование линии с поддержкой hardness и opacity
+ * Рисование линии
  */
 export function drawLine(x0, y0, x1, y1, tool, brushColor, brushSize, drawingCtx, hardness = 80, opacity = 100) {
   const dist = getDistance(x0, y0, x1, y1);
@@ -189,12 +199,11 @@ export function drawLine(x0, y0, x1, y1, tool, brushColor, brushSize, drawingCtx
  * Рисование точки (публичный API)
  */
 export function drawPoint(x, y, tool, brushColor, brushSize, drawingCtx, hardness = 80, opacity = 100) {
-  if (tool === TOOLS.DRAW && !isPixelInUVMask(x, y)) return;
   drawPointWithGradient(x, y, tool, brushColor, brushSize, drawingCtx, hardness, opacity);
 }
 
 /**
- * Получение координат на canvas (legacy, для совместимости)
+ * Получение координат на canvas
  */
 export function getCanvasCoords(e, canvas) {
   const rect = canvas.getBoundingClientRect();
@@ -216,7 +225,7 @@ export function getDistance(x1, y1, x2, y2) {
 }
 
 /**
- * Применение UV маски
+ * Применение UV маски к canvas
  */
 export function applyUVMask(canvas, uvLayoutImage) {
   if (!uvLayoutImage) return;
@@ -244,7 +253,7 @@ export function generateBrushPreview(size, hardness, color = '#000000') {
   const { r, g, b } = rgb;
   const h = hardness / 100;
   
-  // Шахматный фон
+  // Шахматный фон для прозрачности
   const checkerSize = 4;
   for (let y = 0; y < size; y += checkerSize) {
     for (let x = 0; x < size; x += checkerSize) {
@@ -259,7 +268,7 @@ export function generateBrushPreview(size, hardness, color = '#000000') {
   
   if (h >= 0.99) {
     gradient.addColorStop(0, `rgba(${r},${g},${b},1)`);
-    gradient.addColorStop(0.99, `rgba(${r},${g},${b},1)`);
+    gradient.addColorStop(0.95, `rgba(${r},${g},${b},1)`);
     gradient.addColorStop(1, `rgba(${r},${g},${b},0)`);
   } else if (h <= 0.01) {
     gradient.addColorStop(0, `rgba(${r},${g},${b},1)`);

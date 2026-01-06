@@ -1,11 +1,10 @@
 /**
- * Хук для рисования с новой архитектурой инструментов
+ * Хук для рисования с поддержкой штампа
  * 
- * Поддерживает:
- * - Все инструменты через ToolManager
- * - Давление планшета (Pointer Events)
- * - Прозрачность кисти
- * - Интеграцию с viewport (зум/пан)
+ * Исправления:
+ * - Передаём layers в контекст штампа
+ * - Передаём UV-маску
+ * - Поддержка мобильного long-press для штампа
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -13,6 +12,9 @@ import { CANVAS_SIZE, TOOLS, PERFORMANCE } from '../utils/constants';
 import { toolManager } from '../tools/ToolManager';
 import { initUVMaskCache, applyUVMask } from '../utils/drawingUtils';
 import { LAYER_TYPES } from './useLayers';
+
+// Глобальный кэш UV-маски для штампа
+let uvMaskDataCache = null;
 
 export function useDrawingWithTools(
   uvLayoutImage, 
@@ -22,7 +24,8 @@ export function useDrawingWithTools(
   onCanvasUpdate,
   viewport,
   screenToCanvas,
-  getAllLayersComposite
+  getAllLayersComposite,
+  getLayers // Новый параметр - получение всех слоёв
 ) {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentTool, setCurrentTool] = useState(TOOLS.DRAW);
@@ -32,17 +35,36 @@ export function useDrawingWithTools(
   const currentDrawingLayerRef = useRef(null);
   const needNewLayerRef = useRef(false);
   const initializedRef = useRef(false);
+  const layersRef = useRef(null);
   
   const onCanvasUpdateRef = useRef(onCanvasUpdate);
+  const getLayersRef = useRef(getLayers);
+  
   useEffect(() => { onCanvasUpdateRef.current = onCanvasUpdate; }, [onCanvasUpdate]);
+  useEffect(() => { getLayersRef.current = getLayers; }, [getLayers]);
 
   // Инициализация UV маски
   useEffect(() => {
     if (uvLayoutImage && !initializedRef.current) {
       initializedRef.current = true;
       initUVMaskCache(uvLayoutImage);
+      
+      // Кэшируем данные UV-маски для штампа
+      const canvas = document.createElement('canvas');
+      canvas.width = CANVAS_SIZE;
+      canvas.height = CANVAS_SIZE;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(uvLayoutImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      uvMaskDataCache = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE).data;
     }
   }, [uvLayoutImage]);
+
+  /**
+   * Обновление ссылки на слои
+   */
+  const updateLayersRef = useCallback((layers) => {
+    layersRef.current = layers;
+  }, []);
 
   /**
    * Выбор инструмента
@@ -51,7 +73,6 @@ export function useDrawingWithTools(
     toolManager.select(toolId, {});
     setCurrentTool(toolId);
     
-    // Обновляем статус штампа
     if (toolId === TOOLS.STAMP) {
       const stampTool = toolManager.get(TOOLS.STAMP);
       setStampSourceSet(stampTool?.hasSource() || false);
@@ -64,9 +85,16 @@ export function useDrawingWithTools(
   const setStampSource = useCallback((x, y, compositeCanvas) => {
     const stampTool = toolManager.get(TOOLS.STAMP);
     if (stampTool) {
-      stampTool.setSource({ x, y }, { compositeCanvas });
-      setStampSourceSet(true);
-      return true;
+      // Получаем текущие слои
+      const layers = getLayersRef.current ? getLayersRef.current() : layersRef.current;
+      
+      const result = stampTool.setSource({ x, y }, { 
+        compositeCanvas,
+        layers,
+        uvMaskData: uvMaskDataCache
+      });
+      setStampSourceSet(result);
+      return result;
     }
     return false;
   }, []);
@@ -75,16 +103,20 @@ export function useDrawingWithTools(
    * Извлечение давления из события
    */
   const getPressure = useCallback((e) => {
-    // Pointer Events API для давления
     if (e.pressure !== undefined && e.pressure > 0) {
       return e.pressure;
     }
-    // Touch Events fallback
     if (e.touches?.[0]?.force) {
       return e.touches[0].force;
     }
-    // Нет давления - возвращаем 1
     return 1.0;
+  }, []);
+
+  /**
+   * Определение touch события
+   */
+  const isTouch = useCallback((e) => {
+    return e.touches !== undefined || e.pointerType === 'touch';
   }, []);
 
   /**
@@ -95,11 +127,9 @@ export function useDrawingWithTools(
     const clientX = touch ? touch.clientX : e.clientX;
     const clientY = touch ? touch.clientY : e.clientY;
     
-    // Координаты относительно контейнера canvas
     const screenX = clientX - canvasRect.left;
     const screenY = clientY - canvasRect.top;
     
-    // Преобразуем в координаты холста с учётом зума
     const canvasCoords = screenToCanvas 
       ? screenToCanvas(screenX, screenY)
       : { 
@@ -124,6 +154,23 @@ export function useDrawingWithTools(
     const activeLayer = getActiveLayer();
     const tool = toolManager.getCurrent();
     const toolId = toolManager.getCurrentId();
+    
+    // Получаем текущие слои для штампа
+    const layers = getLayersRef.current ? getLayersRef.current() : layersRef.current;
+    
+    // Контекст для штампа
+    const stampContext = {
+      compositeCanvas,
+      layers,
+      uvMaskData: uvMaskDataCache,
+      altKey: e.altKey,
+      isMobile: 'ontouchstart' in window,
+      isTouch: isTouch(e),
+      onSourceSet: () => {
+        setStampSourceSet(true);
+        if (onCanvasUpdateRef.current) onCanvasUpdateRef.current(true);
+      }
+    };
     
     // Проверка Alt+Click для штампа
     if (toolId === TOOLS.STAMP && e.altKey) {
@@ -158,7 +205,7 @@ export function useDrawingWithTools(
     const layer = currentDrawingLayerRef.current;
     if (!layer || !layer.ctx) return;
     
-    // Контекст для инструмента
+    // Полный контекст для инструмента
     const context = {
       layer,
       canvas: layer.canvas,
@@ -170,22 +217,28 @@ export function useDrawingWithTools(
         hardness: settings.brushHardness ?? settings.hardness ?? 80,
         opacity: settings.brushOpacity ?? settings.opacity ?? 100
       },
-      compositeCanvas
+      ...stampContext
     };
     
     // Вызов обработчика инструмента
     const result = tool?.onPointerDown(point, context);
     
+    // Если штамп установил источник через long-press
+    if (result?.sourceSet) {
+      setStampSourceSet(true);
+      if (onCanvasUpdateRef.current) onCanvasUpdateRef.current(true);
+      return;
+    }
+    
     // Проверка на необходимость установки источника штампа
     if (result?.needSource) {
-      console.log('Stamp: Alt+Click to set source first');
       return;
     }
     
     setIsDrawing(true);
     isDrawingRef.current = true;
     
-    // Применяем UV маску и обновляем canvas
+    // Применяем UV маску
     if (toolId === TOOLS.DRAW && uvLayoutImage && layer.canvas) {
       applyUVMask(layer.canvas, uvLayoutImage);
     }
@@ -193,7 +246,7 @@ export function useDrawingWithTools(
     if (onCanvasUpdateRef.current) {
       onCanvasUpdateRef.current();
     }
-  }, [eventToPoint, getActiveLayer, addDrawingLayer, uvLayoutImage, setStampSource]);
+  }, [eventToPoint, getActiveLayer, addDrawingLayer, uvLayoutImage, setStampSource, isTouch]);
 
   /**
    * Продолжение рисования
@@ -208,6 +261,8 @@ export function useDrawingWithTools(
     
     if (!layer || !layer.ctx || !tool) return;
     
+    const layers = getLayersRef.current ? getLayersRef.current() : layersRef.current;
+    
     const context = {
       layer,
       canvas: layer.canvas,
@@ -219,7 +274,9 @@ export function useDrawingWithTools(
         hardness: settings.brushHardness ?? settings.hardness ?? 80,
         opacity: settings.brushOpacity ?? settings.opacity ?? 100
       },
-      compositeCanvas
+      compositeCanvas,
+      layers,
+      uvMaskData: uvMaskDataCache
     };
     
     tool.onPointerMove(point, context);
@@ -238,21 +295,25 @@ export function useDrawingWithTools(
    * Окончание рисования
    */
   const stopDrawing = useCallback((e, canvasRect) => {
-    if (!isDrawingRef.current) return;
-    
     const tool = toolManager.getCurrent();
     const layer = currentDrawingLayerRef.current;
     
-    if (tool && layer) {
-      const point = e ? eventToPoint(e, canvasRect) : { x: 0, y: 0 };
+    if (tool) {
+      const point = e && canvasRect ? eventToPoint(e, canvasRect) : { x: 0, y: 0 };
       tool.onPointerUp(point, {
         layer,
-        canvas: layer.canvas,
-        ctx: layer.ctx
+        canvas: layer?.canvas,
+        ctx: layer?.ctx
       });
     }
     
-    if (saveToHistory) {
+    // Инвалидируем кэш штампа после рисования
+    const stampTool = toolManager.get(TOOLS.STAMP);
+    if (stampTool) {
+      stampTool.invalidateCache();
+    }
+    
+    if (isDrawingRef.current && saveToHistory) {
       saveToHistory();
     }
     
@@ -322,6 +383,7 @@ export function useDrawingWithTools(
     setStampSource,
     needsStampSource,
     getStampSourcePoint,
+    updateLayersRef,
     
     // Обработчики рисования
     startDrawing,

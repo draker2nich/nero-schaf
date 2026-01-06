@@ -74,6 +74,10 @@ function GarmentDesignerWithLayers() {
   const imageTransformRef = useRef({ x: 0, y: 0, scale: 1, rotation: 0 });
   const uvLayoutImageRef = useRef(null);
   
+  // Long-press для штампа на мобильных
+  const longPressTimerRef = useRef(null);
+  const longPressPointRef = useRef(null);
+  
   const isMobile = useIsMobile();
   const isMobileDeviceRef = useRef(isMobileDevice());
 
@@ -179,6 +183,9 @@ function GarmentDesignerWithLayers() {
     undo, redo, canUndo, canRedo
   } = useLayers(updateCanvas);
 
+  // Функция получения слоёв для штампа
+  const getLayers = useCallback(() => layersRef.current, []);
+
   useEffect(() => { layersRef.current = layers; renderUVCanvas(); }, [layers, renderUVCanvas]);
 
   const {
@@ -189,6 +196,7 @@ function GarmentDesignerWithLayers() {
     setStampSource,
     needsStampSource,
     getStampSourcePoint,
+    updateLayersRef,
     startDrawing,
     continueDrawing,
     stopDrawing,
@@ -201,8 +209,16 @@ function GarmentDesignerWithLayers() {
     updateCanvas,
     viewport,
     screenToCanvas,
-    () => compositeCanvasRef.current
+    () => compositeCanvasRef.current,
+    getLayers // Передаём функцию получения слоёв
   );
+
+  // Обновляем ссылку на слои для хука рисования
+  useEffect(() => {
+    if (updateLayersRef) {
+      updateLayersRef(layers);
+    }
+  }, [layers, updateLayersRef]);
 
   const {
     pendingImage, imageTransform, setImageTransform, isTransformMode,
@@ -336,7 +352,15 @@ function GarmentDesignerWithLayers() {
     return screenToCanvas(screenX, screenY);
   }, [screenToCanvas]);
 
-  // Отслеживание количества тачей для pinch-to-zoom
+  // Очистка long-press таймера
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressPointRef.current = null;
+  }, []);
+
   const touchCountRef = useRef(0);
   const lastPinchDistanceRef = useRef(0);
 
@@ -344,12 +368,13 @@ function GarmentDesignerWithLayers() {
     const rect = uvCanvasContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    // Обработка multi-touch для pinch-to-zoom на мобильных
+    // Обработка multi-touch для pinch-to-zoom
     if (e.touches) {
       touchCountRef.current = e.touches.length;
       
       if (e.touches.length === 2) {
         e.preventDefault();
+        clearLongPressTimer();
         const t1 = e.touches[0];
         const t2 = e.touches[1];
         lastPinchDistanceRef.current = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
@@ -360,10 +385,12 @@ function GarmentDesignerWithLayers() {
 
     if (shouldPan || e.button === 1) {
       e.preventDefault();
+      clearLongPressTimer();
       startPan(e.clientX || e.touches?.[0]?.clientX, e.clientY || e.touches?.[0]?.clientY);
       return;
     }
 
+    // Alt+Click для штампа на desktop
     if (tool === TOOLS.STAMP && e.altKey) {
       const coords = getCanvasCoords(e);
       if (coords.x >= 0 && coords.x < CANVAS_SIZE && coords.y >= 0 && coords.y < CANVAS_SIZE) {
@@ -372,7 +399,28 @@ function GarmentDesignerWithLayers() {
       return;
     }
 
+    // Long-press для штампа на мобильных
+    if (tool === TOOLS.STAMP && (e.touches || isMobile)) {
+      const coords = getCanvasCoords(e);
+      longPressPointRef.current = coords;
+      
+      longPressTimerRef.current = setTimeout(() => {
+        if (longPressPointRef.current) {
+          const { x, y } = longPressPointRef.current;
+          if (x >= 0 && x < CANVAS_SIZE && y >= 0 && y < CANVAS_SIZE) {
+            setStampSource(x, y, compositeCanvasRef.current);
+            // Вибрация для обратной связи на мобильных
+            if (navigator.vibrate) {
+              navigator.vibrate(50);
+            }
+          }
+        }
+        clearLongPressTimer();
+      }, 500);
+    }
+
     if (isTransformMode && pendingImage) {
+      clearLongPressTimer();
       const coords = getCanvasCoords(e);
       startDrag(coords.x, coords.y, e.touches);
       return;
@@ -380,7 +428,8 @@ function GarmentDesignerWithLayers() {
 
     const settings = { brushSize, brushColor, brushHardness, brushOpacity };
     startDrawing(e, rect, settings, compositeCanvasRef.current);
-  }, [shouldPan, tool, isTransformMode, pendingImage, brushSize, brushColor, brushHardness, brushOpacity, startPan, getCanvasCoords, setStampSource, startDrag, startDrawing, handleTouchStart]);
+  }, [shouldPan, tool, isTransformMode, pendingImage, brushSize, brushColor, brushHardness, brushOpacity, 
+      startPan, getCanvasCoords, setStampSource, startDrag, startDrawing, handleTouchStart, isMobile, clearLongPressTimer]);
 
   const handlePointerMove = useCallback((e) => {
     const now = Date.now();
@@ -390,9 +439,19 @@ function GarmentDesignerWithLayers() {
     const rect = uvCanvasContainerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    // Pinch-to-zoom на мобильных
+    // Отменяем long-press если двигаемся
+    if (longPressPointRef.current) {
+      const coords = getCanvasCoords(e);
+      const dist = Math.hypot(coords.x - longPressPointRef.current.x, coords.y - longPressPointRef.current.y);
+      if (dist > 15) {
+        clearLongPressTimer();
+      }
+    }
+
+    // Pinch-to-zoom
     if (e.touches && e.touches.length === 2) {
       e.preventDefault();
+      clearLongPressTimer();
       handleTouchMove(e);
       return;
     }
@@ -410,11 +469,13 @@ function GarmentDesignerWithLayers() {
 
     const settings = { brushSize, brushColor, brushHardness, brushOpacity };
     continueDrawing(e, rect, settings, compositeCanvasRef.current);
-  }, [isPanning, isTransformMode, brushSize, brushColor, brushHardness, brushOpacity, getCanvasCoords, pan, drag, continueDrawing, handleTouchMove]);
+  }, [isPanning, isTransformMode, brushSize, brushColor, brushHardness, brushOpacity, 
+      getCanvasCoords, pan, drag, continueDrawing, handleTouchMove, clearLongPressTimer]);
 
   const handlePointerUp = useCallback((e) => {
     touchCountRef.current = 0;
     lastPinchDistanceRef.current = 0;
+    clearLongPressTimer();
     
     if (isPanning) {
       endPan();
@@ -422,13 +483,21 @@ function GarmentDesignerWithLayers() {
     }
     stopDrawing(e, uvCanvasContainerRef.current?.getBoundingClientRect());
     stopDrag();
-  }, [isPanning, endPan, stopDrawing, stopDrag]);
+  }, [isPanning, endPan, stopDrawing, stopDrag, clearLongPressTimer]);
 
   const handlePointerLeave = useCallback(() => {
+    clearLongPressTimer();
     if (isPanning) endPan();
     stopDrawing();
     stopDrag();
-  }, [isPanning, endPan, stopDrawing, stopDrag]);
+  }, [isPanning, endPan, stopDrawing, stopDrag, clearLongPressTimer]);
+
+  // Очистка таймера при размонтировании
+  useEffect(() => {
+    return () => {
+      clearLongPressTimer();
+    };
+  }, [clearLongPressTimer]);
 
   const downloadDesign = useCallback(async () => {
     if (!uvCanvasRef.current || exportingPdf) return;
@@ -577,7 +646,13 @@ function GarmentDesignerWithLayers() {
           
           {tool === TOOLS.STAMP && needsStampSource() && (
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-yellow-100 border border-yellow-300 rounded-lg text-xs text-yellow-800 shadow-md">
-              {isMobile ? 'Долгое нажатие для источника' : 'Alt+Click для источника'}
+              {isMobile ? 'Долгое нажатие = источник' : 'Alt+Click = источник'}
+            </div>
+          )}
+          
+          {tool === TOOLS.STAMP && stampSourceSet && (
+            <div className="absolute top-6 right-6 px-2 py-1 bg-green-500/80 text-white text-xs rounded-md">
+              ✓ Источник установлен
             </div>
           )}
           
